@@ -1,0 +1,75 @@
+{
+  "name": "@azure/swagger-to-sdk-ts",
+  "author": {
+    "name": "Microsoft Corporation",
+    "email": "azsdkteam@microsoft.com",
+    "url": "https://github.com/Azure/swagger-to-sdk-ts"
+  },
+  "version": "1.2.4",
+  "description": "A TypeScript implementation of the Swagger to SDK service",
+  "tags": [
+    "swagger-to-sdk"
+  ],
+  "keywords": [
+    "swagger-to-sdk"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.js.map",
+    "lib/**/*.ts",
+    "LICENSE",
+    "README.md"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@ts-common/azure-js-dev-tools": "^0.8.2"
+  },
+  "devDependencies": {
+    "@types/chai": "^4.1.7",
+    "@types/mocha": "^5.2.5",
+    "@types/node": "^10.12.18",
+    "chai": "^4.2.0",
+    "mocha": "^5.2.0",
+    "mocha-junit-reporter": "^1.18.0",
+    "mocha-multi-reporters": "^1.1.7",
+    "nyc": "^13.1.0",
+    "ts-node": "^7.0.1",
+    "tslint": "^5.12.1",
+    "typescript": "^3.2.2"
+  },
+  "homepage": "https://github.com/Azure/swagger-to-sdk-ts",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:Azure/swagger-to-sdk-ts.git"
+  },
+  "bugs": {
+    "url": "http://github.com/Azure/swagger-to-sdk-ts/issues"
+  },
+  "nyc": {
+    "extension": [
+      ".ts"
+    ],
+    "exclude": [
+      "coverage/**/*",
+      "**/*.d.ts",
+      "**/*.js"
+    ],
+    "reporter": [
+      "text",
+      "html",
+      "cobertura"
+    ],
+    "all": true
+  },
+  "scripts": {
+    "build": "tsc -p . && tslint -p . -c tslint.json && tsc -p ./.scripts/ && tslint -p ./.scripts/ -c tslint.json",
+    "test": "nyc mocha",
+    "prepack": "npm install && npm run build",
+    "local": "ts-node ./.scripts/local.ts",
+    "latest": "ts-node ./.scripts/latest.ts",
+    "check:everything": "ts-node ./.scripts/checkEverything.ts"
+  },
+  "sideEffects": false
+}
