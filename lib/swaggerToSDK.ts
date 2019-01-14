@@ -1,15 +1,19 @@
 import { GitHubPullRequestWebhookBody } from "@ts-common/azure-js-dev-tools";
 import { InMemoryTelemetry } from "./inMemoryTelemetry";
 import { Telemetry } from "./telemetry";
+import { AutoRest } from "./autoRest";
+import { FakeAutoRest } from "./fakeAutoRest";
 
 /**
  * The collection of functions that implement the Swagger To SDK service.
  */
 export class SwaggerToSDK {
   public readonly telemetry: Telemetry;
+  private readonly autorest: AutoRest;
 
-  constructor(telemetry?: Telemetry) {
+  constructor(telemetry?: Telemetry, autorest?: AutoRest) {
     this.telemetry = telemetry || new InMemoryTelemetry();
+    this.autorest = autorest || new FakeAutoRest();
   }
 
   /**
