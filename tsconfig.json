@@ -15,6 +15,9 @@
     "declarationMap": true,
     "importHelpers": true,
     "esModuleInterop": true,
+    "lib": [
+      "es2015"
+    ]
   },
   "compileOnSave": true,
   "exclude": [

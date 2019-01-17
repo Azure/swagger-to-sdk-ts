@@ -8,3 +8,22 @@ export interface Telemetry {
    */
   logMessage(message: string): void;
 }
+
+/**
+ * An implementation of the Telemetry interface that does nothing.
+ */
+export class NoTelemetry implements Telemetry {
+  public logMessage(): void {
+  }
+}
+
+/**
+ * An implementation of the Telemetry interface that stores all logs in-memory.
+ */
+export class InMemoryTelemetry implements Telemetry {
+  public readonly logs: string[] = [];
+
+  public logMessage(message: string): void {
+    this.logs.push(message);
+  }
+}
