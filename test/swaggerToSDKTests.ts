@@ -19,7 +19,7 @@ const headCommit: jsDevTools.GitHubCommit = {
 const pullRequest: jsDevTools.GitHubPullRequest = {
   base: baseCommit,
   head: headCommit,
-  // merge_commit_sha: "2ce7da83cb44a735d65010158b01807ef11441e2",
+  merge_commit_sha: "2ce7da83cb44a735d65010158b01807ef11441e2",
   id: 244099155,
   labels: [],
   number: 5025,
@@ -115,7 +115,8 @@ describe("SwaggerToSDK", function () {
         ]);
       });
 
-      it("when diff_url returns non-empty body", async function () {
+      it("end-to-end", async function () {
+        this.timeout(600000);
         const telemetry = new InMemoryTelemetry();
         const httpClient: jsDevTools.HttpClient = new jsDevTools.NodeHttpClient();
         const swaggerToSDK = new SwaggerToSDK({ telemetry, httpClient });
@@ -124,7 +125,7 @@ describe("SwaggerToSDK", function () {
           number: 1,
           pull_request: pullRequest
         };
-        await swaggerToSDK.pullRequestChange(webhookBody);
+        await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: "C:/" });
         assert.deepEqual(telemetry.logs, [
           `Received pull request change webhook request from GitHub for "https://github.com/Azure/azure-rest-api-specs/pull/5025".`,
           `Getting diff_url (https://github.com/Azure/azure-rest-api-specs/pull/5025.diff) contents...`,
@@ -138,7 +139,37 @@ describe("SwaggerToSDK", function () {
           `specification/sql/resource-manager/Microsoft.Sql/preview/2017-03-01-preview/examples/LongTermRetentionPolicyCreateOrUpdate.json`,
           `specification/sql/resource-manager/Microsoft.Sql/preview/2017-03-01-preview/longTermRetention.json`,
           `Found 1 readme.md files to generate:`,
-          `specification/sql/resource-manager/readme.md`
+          `specification/sql/resource-manager/readme.md`,
+          `Looking for languages to generate in "specification/sql/resource-manager/readme.md"...`,
+          `Getting file contents for "https://raw.githubusercontent.com/azure/azure-rest-api-specs/2ce7da83cb44a735d65010158b01807ef11441e2/specification/sql/resource-manager/readme.md"...`,
+          `Merged readme.md response status code is 200.`,
+          `Found 6 requested SDK repositories:`,
+          `azure-sdk-for-python`,
+          `azure-sdk-for-java`,
+          `azure-sdk-for-go`,
+          `azure-sdk-for-node`,
+          `azure-sdk-for-js`,
+          `azure-sdk-for-ruby`,
+          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python C:/5025/1/1`,
+          `Deleting clone of Azure/azure-sdk-for-python at folder C:/5025/1/1...`,
+          `Finished deleting clone of Azure/azure-sdk-for-python at folder C:/5025/1/1.`,
+          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java C:/5025/1/1`,
+          `Deleting clone of Azure/azure-sdk-for-java at folder C:/5025/1/1...`,
+          `Finished deleting clone of Azure/azure-sdk-for-java at folder C:/5025/1/1.`,
+          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-go C:/5025/1/src/github.com/Azure/azure-sdk-for-go`,
+          `Deleting clone of Azure/azure-sdk-for-go at folder C:/5025/1/src/github.com/Azure/azure-sdk-for-go...`,
+          `Finished deleting clone of Azure/azure-sdk-for-go at folder C:/5025/1/src/github.com/Azure/azure-sdk-for-go.`,
+          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-node C:/5025/1/azure-sdk-for-node`,
+          `Deleting clone of Azure/azure-sdk-for-node at folder C:/5025/1/azure-sdk-for-node...`,
+          `Finished deleting clone of Azure/azure-sdk-for-node at folder C:/5025/1/azure-sdk-for-node.`,
+          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-js C:/5025/1/azure-sdk-for-js`,
+          `Deleting clone of Azure/azure-sdk-for-js at folder C:/5025/1/azure-sdk-for-js...`,
+          `Finished deleting clone of Azure/azure-sdk-for-js at folder C:/5025/1/azure-sdk-for-js.`,
+          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-ruby C:/5025/1/1`,
+          `Deleting clone of Azure/azure-sdk-for-ruby at folder C:/5025/1/1...`,
+          `Finished deleting clone of Azure/azure-sdk-for-ruby at folder C:/5025/1/1.`,
+          `Deleting generation instance folder C:/5025/1...`,
+          `Finished deleting generation instance folder C:/5025/1.`
         ]);
       });
     });
