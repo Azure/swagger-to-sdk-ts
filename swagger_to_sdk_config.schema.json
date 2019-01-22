@@ -24,6 +24,11 @@
           },
           "description": "List of commands to execute after the generation is done. Will be executed in the order of the list. Current working directory will be the cloned path. See also \"envs\" node."
         },
+        "autorest_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The version of autorest to use for generating artifacts for this repository. Defaults to the latest."
+        },
         "autorest_options": {
           "$ref": "#/definitions/autorest_options"
         },

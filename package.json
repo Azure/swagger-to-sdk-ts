@@ -24,7 +24,7 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@ts-common/azure-js-dev-tools": "^2.0.0",
+    "@ts-common/azure-js-dev-tools": "^2.1.1",
     "@types/commonmark": "^0.27.1",
     "@types/js-yaml": "^3.11.4",
     "commonmark": "^0.28.1",

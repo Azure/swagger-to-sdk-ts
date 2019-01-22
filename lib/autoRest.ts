@@ -1,21 +1,48 @@
+import { RunResult } from "@ts-common/azure-js-dev-tools";
 import * as commonmark from "commonmark";
 import * as jsYaml from "js-yaml";
 
 /**
  * An interface that can be used to invoke an AutoRest generation process.
  */
-export interface AutoRest {
+export abstract class AutoRest {
   /**
-   * Create a new synchronous AutoRest generation process.
+   * Create a new AutoRest object that will install and run from the provided baseFolder.
+   * @param baseFolder The folder that AutoRest will be installed and run relative to.
+   * @param version The version of AutoRest that will be installed. Defaults to the latest version.
    */
-  run(): void;
+  constructor(public readonly baseFolder: string, public readonly version?: string) {
+  }
+  /**
+   * Install AutoRest.
+   */
+  public abstract install(): RunResult;
+  /**
+   * Run AutoRest.
+   */
+  public abstract run(): RunResult;
+}
+
+/**
+ * A real AutoRest facade implementation that attempts to invoke AutoRest.
+ */
+export class RealAutoRest extends AutoRest {
+  public install(): RunResult {
+    throw new Error("Method not implemented.");
+  }
+  public run(): RunResult {
+    throw new Error("Method not implemented.");
+  }
 }
 
 /**
  * A fake AutoRest facade implementation.
  */
-export class FakeAutoRest implements AutoRest {
-  public run(): void {
+export class FakeAutoRest extends AutoRest {
+  public install(): RunResult {
+    throw new Error("Method not implemented.");
+  }
+  public run(): RunResult {
     throw new Error("Method not implemented.");
   }
 }

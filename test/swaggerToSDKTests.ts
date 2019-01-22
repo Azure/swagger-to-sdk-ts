@@ -1,5 +1,4 @@
 import * as jsDevTools from "@ts-common/azure-js-dev-tools";
-import { HttpHeaders } from "@ts-common/azure-js-dev-tools";
 import { assert } from "chai";
 import { SwaggerToSDK } from "../lib/swaggerToSDK";
 import { InMemoryTelemetry, NoTelemetry } from "../lib/telemetry";
@@ -70,7 +69,7 @@ describe("SwaggerToSDK", function () {
             return Promise.resolve({
               request,
               statusCode: 404,
-              headers: new HttpHeaders()
+              headers: new jsDevTools.HttpHeaders()
             });
           }
         };
@@ -95,7 +94,7 @@ describe("SwaggerToSDK", function () {
             return Promise.resolve({
               request,
               statusCode: 200,
-              headers: new HttpHeaders(),
+              headers: new jsDevTools.HttpHeaders(),
               body: ""
             });
           }
@@ -125,7 +124,8 @@ describe("SwaggerToSDK", function () {
           number: 1,
           pull_request: pullRequest
         };
-        await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: "C:/" });
+        const rootPath: string = jsDevTools.normalize(jsDevTools.getRootPath(process.cwd())!);
+        await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: rootPath });
         assert.deepEqual(telemetry.logs, [
           `Received pull request change webhook request from GitHub for "https://github.com/Azure/azure-rest-api-specs/pull/5025".`,
           `Getting diff_url (https://github.com/Azure/azure-rest-api-specs/pull/5025.diff) contents...`,
@@ -150,26 +150,32 @@ describe("SwaggerToSDK", function () {
           `azure-sdk-for-node`,
           `azure-sdk-for-js`,
           `azure-sdk-for-ruby`,
-          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python C:/5025/1/1`,
-          `Deleting clone of Azure/azure-sdk-for-python at folder C:/5025/1/1...`,
-          `Finished deleting clone of Azure/azure-sdk-for-python at folder C:/5025/1/1.`,
-          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java C:/5025/1/1`,
-          `Deleting clone of Azure/azure-sdk-for-java at folder C:/5025/1/1...`,
-          `Finished deleting clone of Azure/azure-sdk-for-java at folder C:/5025/1/1.`,
-          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-go C:/5025/1/src/github.com/Azure/azure-sdk-for-go`,
-          `Deleting clone of Azure/azure-sdk-for-go at folder C:/5025/1/src/github.com/Azure/azure-sdk-for-go...`,
-          `Finished deleting clone of Azure/azure-sdk-for-go at folder C:/5025/1/src/github.com/Azure/azure-sdk-for-go.`,
-          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-node C:/5025/1/azure-sdk-for-node`,
-          `Deleting clone of Azure/azure-sdk-for-node at folder C:/5025/1/azure-sdk-for-node...`,
-          `Finished deleting clone of Azure/azure-sdk-for-node at folder C:/5025/1/azure-sdk-for-node.`,
-          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-js C:/5025/1/azure-sdk-for-js`,
-          `Deleting clone of Azure/azure-sdk-for-js at folder C:/5025/1/azure-sdk-for-js...`,
-          `Finished deleting clone of Azure/azure-sdk-for-js at folder C:/5025/1/azure-sdk-for-js.`,
-          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-ruby C:/5025/1/1`,
-          `Deleting clone of Azure/azure-sdk-for-ruby at folder C:/5025/1/1...`,
-          `Finished deleting clone of Azure/azure-sdk-for-ruby at folder C:/5025/1/1.`,
-          `Deleting generation instance folder C:/5025/1...`,
-          `Finished deleting generation instance folder C:/5025/1.`
+          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python ${rootPath}5025/1/1`,
+          `${rootPath}5025/1/1: npm.cmd install autorest`,
+          `Deleting clone of Azure/azure-sdk-for-python at folder ${rootPath}5025/1/1...`,
+          `Finished deleting clone of Azure/azure-sdk-for-python at folder ${rootPath}5025/1/1.`,
+          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${rootPath}5025/1/1`,
+          `${rootPath}5025/1/1: npm.cmd install autorest`,
+          `Deleting clone of Azure/azure-sdk-for-java at folder ${rootPath}5025/1/1...`,
+          `Finished deleting clone of Azure/azure-sdk-for-java at folder ${rootPath}5025/1/1.`,
+          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-go ${rootPath}5025/1/src/github.com/Azure/azure-sdk-for-go`,
+          `${rootPath}5025/1/src/github.com/Azure/azure-sdk-for-go: npm.cmd install autorest`,
+          `Deleting clone of Azure/azure-sdk-for-go at folder ${rootPath}5025/1/src/github.com/Azure/azure-sdk-for-go...`,
+          `Finished deleting clone of Azure/azure-sdk-for-go at folder ${rootPath}5025/1/src/github.com/Azure/azure-sdk-for-go.`,
+          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-node ${rootPath}5025/1/azure-sdk-for-node`,
+          `${rootPath}5025/1/azure-sdk-for-node: npm.cmd install autorest`,
+          `Deleting clone of Azure/azure-sdk-for-node at folder ${rootPath}5025/1/azure-sdk-for-node...`,
+          `Finished deleting clone of Azure/azure-sdk-for-node at folder ${rootPath}5025/1/azure-sdk-for-node.`,
+          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-js ${rootPath}5025/1/azure-sdk-for-js`,
+          `${rootPath}5025/1/azure-sdk-for-js: npm.cmd install autorest`,
+          `Deleting clone of Azure/azure-sdk-for-js at folder ${rootPath}5025/1/azure-sdk-for-js...`,
+          `Finished deleting clone of Azure/azure-sdk-for-js at folder ${rootPath}5025/1/azure-sdk-for-js.`,
+          `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-ruby ${rootPath}5025/1/1`,
+          `${rootPath}5025/1/1: npm.cmd install autorest`,
+          `Deleting clone of Azure/azure-sdk-for-ruby at folder ${rootPath}5025/1/1...`,
+          `Finished deleting clone of Azure/azure-sdk-for-ruby at folder ${rootPath}5025/1/1.`,
+          `Deleting generation instance folder ${rootPath}5025/1...`,
+          `Finished deleting generation instance folder ${rootPath}5025/1.`
         ]);
       });
     });

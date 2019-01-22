@@ -1,7 +1,7 @@
 import * as jsDevTools from "@ts-common/azure-js-dev-tools";
-import { NoTelemetry, Telemetry } from "./telemetry";
-import { HttpResponse, GitHubRepository, getGitHubRepository, getRepositoryFullName } from "@ts-common/azure-js-dev-tools";
+import { getGitHubRepository, getRepositoryFullName, GitHubRepository, HttpResponse, npmInstall } from "@ts-common/azure-js-dev-tools";
 import { findSwaggerToSDKConfiguration, ReadmeMdSwaggerToSDKConfiguration } from "./autoRest";
+import { NoTelemetry, Telemetry } from "./telemetry";
 
 export type Switch = "" | boolean;
 
@@ -274,6 +274,10 @@ export interface SwaggerToSDKConfiguration {
      */
     after_scripts?: string[];
     /**
+     * The version of autorest to use. Defaults to the latest published version.
+     */
+    autorest_version?: string;
+    /**
      * An optional dictionary of options you want to pass to Autorest. This will be passed in any
      * call, but can be override by "autorest_options" in each data. Note that you CAN'T override
      * "--output-folder" which is filled contextually. All options prefixed by "sdkrel:" can be a
@@ -380,8 +384,8 @@ export function getGenerationInstanceFolderPath(pullRequestFolderPath: string): 
 export function getRepositoryFolderPath(generationInstanceFolderPath: string, swaggerToSDKConfig: SwaggerToSDKConfiguration): string {
   let repositoryFolderPath = `${generationInstanceFolderPath}`;
   if (swaggerToSDKConfig.meta &&
-      swaggerToSDKConfig.meta.advanced_options &&
-      swaggerToSDKConfig.meta.advanced_options.clone_dir) {
+    swaggerToSDKConfig.meta.advanced_options &&
+    swaggerToSDKConfig.meta.advanced_options.clone_dir) {
     repositoryFolderPath = jsDevTools.joinPath(repositoryFolderPath, swaggerToSDKConfig.meta.advanced_options.clone_dir);
   } else {
     let repositoryNumber = 1;
@@ -531,9 +535,26 @@ export class SwaggerToSDK {
                               this.logError(errorMessage);
                             }
                           }
+                        } else {
+                          let autorestInstallSource = `autorest`;
+                          if (swaggerToSDKConfig.meta.autorest_version) {
+                            autorestInstallSource += `@${swaggerToSDKConfig.meta.autorest_version}`;
+                          }
+                          const installAutorestResult: jsDevTools.RunResult = npmInstall({
+                            installSource: autorestInstallSource,
+                            executionFolderPath: repositoryFolderPath,
+                            showCommand: true,
+                            log: (text: string) => this.logMessage(text)
+                          });
+                          if (installAutorestResult.exitCode !== 0) {
+                            this.logError(`Failed to install ${autorestInstallSource}.`);
+                          } else {
+
+
+
+
+                          }
                         }
-
-
 
                         if (!deleteClonedRepositories) {
                           this.logMessage(`Not deleting clone of ${fullRepositoryName} at folder ${repositoryFolderPath}.`);
