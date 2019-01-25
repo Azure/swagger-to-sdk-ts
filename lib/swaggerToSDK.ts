@@ -397,7 +397,34 @@ export class SwaggerToSDK {
                             if (autorestResult.exitCode !== 0) {
                               this.logger.logError(`Failed to run autorest.`);
                             } else {
-
+                              const result: jsDevTools.GitStatusResult = jsDevTools.gitStatus({
+                                runner: this.runner,
+                                executionFolderPath: repositoryFolderPath,
+                                showCommand: true,
+                                log: this.logger.logInfo
+                              });
+                              if (!result.hasUncommittedChanges) {
+                                this.logger.logInfo(`No changes were detected after AutoRest ran.`);
+                              } else {
+                                if (result.untrackedFiles && result.untrackedFiles.length > 0) {
+                                  this.logger.logInfo(`The following files were added:`);
+                                  for (const addedFile of result.untrackedFiles) {
+                                    this.logger.logInfo(`  ${addedFile}`);
+                                  }
+                                }
+                                if (result.notStagedModifiedFiles && result.notStagedModifiedFiles.length > 0) {
+                                  this.logger.logInfo(`The following files were modified:`);
+                                  for (const modifiedFile of result.notStagedModifiedFiles) {
+                                    this.logger.logInfo(`  ${modifiedFile}`);
+                                  }
+                                }
+                                if (result.notStagedDeletedFiles && result.notStagedDeletedFiles.length > 0) {
+                                  this.logger.logInfo(`The following files were deleted:`);
+                                  for (const deletedFile of result.notStagedDeletedFiles) {
+                                    this.logger.logInfo(`  ${deletedFile}`);
+                                  }
+                                }
+                              }
                             }
                           }
                         }
