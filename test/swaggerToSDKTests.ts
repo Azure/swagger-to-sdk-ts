@@ -1,8 +1,7 @@
 import * as jsDevTools from "@ts-common/azure-js-dev-tools";
-import { npmExecutable } from "@ts-common/azure-js-dev-tools";
+import { assertEx, npmExecutable } from "@ts-common/azure-js-dev-tools";
 import { assert } from "chai";
 import { SwaggerToSDK } from "../lib/swaggerToSDK";
-import { InMemoryTelemetry, NoTelemetry } from "../lib/telemetry";
 
 const baseCommit: jsDevTools.GitHubCommit = {
   label: "Azure:master",
@@ -63,27 +62,27 @@ describe("SwaggerToSDK", function () {
   describe("constructor()", function () {
     it("with no arguments", function () {
       const swaggerToSDK = new SwaggerToSDK();
-      assert(swaggerToSDK.telemetry instanceof NoTelemetry);
+      assertEx.defined(swaggerToSDK.logger);
       assert(swaggerToSDK.httpClient instanceof jsDevTools.NodeHttpClient);
     });
 
     it("with undefined options argument", function () {
       const swaggerToSDK = new SwaggerToSDK(undefined);
-      assert(swaggerToSDK.telemetry instanceof NoTelemetry);
+      assertEx.defined(swaggerToSDK.logger);
       assert(swaggerToSDK.httpClient instanceof jsDevTools.NodeHttpClient);
     });
 
     it("with telemetry argument", function () {
-      const telemetry = new InMemoryTelemetry();
-      const swaggerToSDK = new SwaggerToSDK({ telemetry });
-      assert.strictEqual(swaggerToSDK.telemetry, telemetry);
+      const logger: jsDevTools.InMemoryLogger = jsDevTools.getInMemoryLogger();
+      const swaggerToSDK = new SwaggerToSDK({ logger });
+      assert.strictEqual(swaggerToSDK.logger, logger);
       assert(swaggerToSDK.httpClient instanceof jsDevTools.NodeHttpClient);
     });
 
     it("with httpClient argument", function () {
       const httpClient = new jsDevTools.NodeHttpClient();
       const swaggerToSDK = new SwaggerToSDK({ httpClient });
-      assert(swaggerToSDK.telemetry instanceof NoTelemetry);
+      assertEx.defined(swaggerToSDK.logger);
       assert.strictEqual(swaggerToSDK.httpClient, httpClient);
     });
   });
@@ -91,7 +90,7 @@ describe("SwaggerToSDK", function () {
   describe("pullRequestChange()", function () {
     describe("pull request created", function () {
       it("when diff_url returns 404", async function () {
-        const telemetry = new InMemoryTelemetry();
+        const logger: jsDevTools.InMemoryLogger = jsDevTools.getInMemoryLogger();
         const httpClient: jsDevTools.HttpClient = {
           sendRequest(request: jsDevTools.HttpRequest): Promise<jsDevTools.HttpResponse> {
             return Promise.resolve({
@@ -101,22 +100,22 @@ describe("SwaggerToSDK", function () {
             });
           }
         };
-        const swaggerToSDK = new SwaggerToSDK({ telemetry, httpClient });
+        const swaggerToSDK = new SwaggerToSDK({ logger, httpClient });
         const webhookBody: jsDevTools.GitHubPullRequestWebhookBody = {
           action: "opened",
           number: 1,
           pull_request: pullRequest
         };
         await swaggerToSDK.pullRequestChange(webhookBody);
-        assert.deepEqual(telemetry.logs, [
+        assert.deepEqual(logger.allLogs, [
           `Received pull request change webhook request from GitHub for "https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}".`,
           `Getting diff_url (https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}.diff) contents...`,
-          `ERROR: diff_url response status code is 404.`
+          `diff_url response status code is 404.`
         ]);
       });
 
       it("when diff_url returns empty body", async function () {
-        const telemetry = new InMemoryTelemetry();
+        const logger: jsDevTools.InMemoryLogger = jsDevTools.getInMemoryLogger();
         const httpClient: jsDevTools.HttpClient = {
           sendRequest(request: jsDevTools.HttpRequest): Promise<jsDevTools.HttpResponse> {
             return Promise.resolve({
@@ -127,18 +126,18 @@ describe("SwaggerToSDK", function () {
             });
           }
         };
-        const swaggerToSDK = new SwaggerToSDK({ telemetry, httpClient });
+        const swaggerToSDK = new SwaggerToSDK({ logger, httpClient });
         const webhookBody: jsDevTools.GitHubPullRequestWebhookBody = {
           action: "opened",
           number: 1,
           pull_request: pullRequest
         };
         await swaggerToSDK.pullRequestChange(webhookBody);
-        assert.deepEqual(telemetry.logs, [
+        assert.deepEqual(logger.allLogs, [
           `Received pull request change webhook request from GitHub for "https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}".`,
           `Getting diff_url (https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}.diff) contents...`,
           `diff_url response status code is 200.`,
-          `ERROR: diff_url response body is empty.`
+          `diff_url response body is empty.`
         ]);
       });
 
@@ -175,20 +174,20 @@ describe("SwaggerToSDK", function () {
 
       it("end-to-end", async function () {
         this.timeout(600000);
-        const telemetry = new InMemoryTelemetry();
+        const logger: jsDevTools.InMemoryLogger = jsDevTools.getInMemoryLogger();
         const httpClient: jsDevTools.HttpClient = new jsDevTools.NodeHttpClient();
         const rootPath: string = jsDevTools.normalize(jsDevTools.getRootPath(process.cwd())!);
         const npm: string = npmExecutable();
         const autorest: string = jsDevTools.autorestExecutable({ autorestPath: "./node_modules/.bin/autorest" });
         const runner: jsDevTools.Runner = createEndToEndRunner({ real: false, npm, autorest, rootPath });
-        const swaggerToSDK = new SwaggerToSDK({ telemetry, httpClient, runner });
+        const swaggerToSDK = new SwaggerToSDK({ logger, httpClient, runner });
         const webhookBody: jsDevTools.GitHubPullRequestWebhookBody = {
           action: "opened",
           number: 1,
           pull_request: pullRequest
         };
         await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: rootPath });
-        assert.deepEqual(telemetry.logs, [
+        assert.deepEqual(logger.allLogs, [
           `Received pull request change webhook request from GitHub for "https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}".`,
           `Getting diff_url (https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}.diff) contents...`,
           `diff_url response status code is 200.`,

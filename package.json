@@ -5,7 +5,7 @@
     "email": "azsdkteam@microsoft.com",
     "url": "https://github.com/Azure/swagger-to-sdk-ts"
   },
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "A TypeScript implementation of the Swagger to SDK service",
   "tags": [
     "swagger-to-sdk"
@@ -13,8 +13,8 @@
   "keywords": [
     "swagger-to-sdk"
   ],
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/swaggerToSDK.js",
+  "types": "./dist/swaggerToSDK.d.ts",
   "files": [
     "dist/**/*.js",
     "dist/**/*.js.map",
