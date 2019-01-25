@@ -24,7 +24,7 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@ts-common/azure-js-dev-tools": "^2.1.1",
+    "@ts-common/azure-js-dev-tools": "^3.2.3",
     "@types/commonmark": "^0.27.1",
     "@types/js-yaml": "^3.11.4",
     "commonmark": "^0.28.1",
@@ -72,7 +72,8 @@
   },
   "scripts": {
     "build": "tsc -p . && tslint -p . -c tslint.json && tsc -p ./.scripts/ && tslint -p ./.scripts/ -c tslint.json",
-    "test": "nyc mocha",
+    "test": "mocha",
+    "coverage": "nyc mocha",
     "prepack": "npm install && npm run build",
     "local": "ts-node ./.scripts/local.ts",
     "latest": "ts-node ./.scripts/latest.ts",
