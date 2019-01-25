@@ -1,180 +1,6 @@
 import * as jsDevTools from "@ts-common/azure-js-dev-tools";
+import { getGitHubRepository, getRepositoryFullName, GitHubRepository, HttpResponse, npmInstall } from "@ts-common/azure-js-dev-tools";
 import { NoTelemetry, Telemetry } from "./telemetry";
-import { HttpResponse, GitHubRepository, getGitHubRepository, getRepositoryFullName } from "@ts-common/azure-js-dev-tools";
-import { findSwaggerToSDKConfiguration, ReadmeMdSwaggerToSDKConfiguration } from "./autoRest";
-
-export type Switch = "" | boolean;
-
-/**
- * An optional dictionary of options you want to pass to Autorest. This will be passed in any call,
- * but can be override by "autorest_options" in each data. Note that you CAN'T override
- * "--output-folder" which is filled contextually. All options prefixed by "sdkrel:" can be a
- * relative path that will be solved against SDK folder before being sent to Autorest.
- */
-export interface AutoRestOptions {
-  /**
-   * Show verbose output information.
-   */
-  verbose?: Switch;
-  /**
-   * Show internal debug information.
-   */
-  debug?: Switch;
-  /**
-   * Suppress output.
-   */
-  quiet?: Switch;
-  /**
-   * Show all installed versions of AutoRest tools.
-   */
-  "list-installed"?: Switch;
-  /**
-   * Lists the last nn releases available from github.
-   */
-  "list-available"?: number;
-  /**
-   * Uses specified version of AutoRest (installing if necessary.)
-   * For version you can use a version label (see --list-available) or
-   * -latest: Get latest nightly build.
-   * -latest-release: Get latest release version.
-   */
-  version?: string;
-  /**
-   * Remove all installed versions of AutoRest tools and install the latest (override with
-   * --version).
-   */
-  reset?: Switch;
-  /**
-   * Overrides the platform detection for the dotnet runtime (special case). Refer to the Runtime
-   * Identifier (RID) catalog for more details.
-   */
-  "runtime-id"?: string;
-  /**
-   * Adds the given file to the list of input files for generation process.
-   */
-  "input-file"?: string;
-  /**
-   * Sets the namespace to use for the generated code.
-   */
-  namespace?: string;
-  /**
-   * Text to include as a header comment in generated files. Use NONE to suppress the default header.
-   */
-  "license-header"?: string;
-  /**
-   * If specified, the generated client includes a ServiceClientCredentials property and constructor
-   * parameter. Authentication behaviors are implemented by extending the ServiceClientCredentials
-   * type.
-   */
-  "add-credentials"?: Switch;
-  /**
-   * Name of the package.
-   */
-  "package-name"?: string;
-  /**
-   * Version of the package.
-   */
-  "package-version"?: string;
-  /**
-   * Specifies mode for generating sync wrappers. Supported value are:
-   * essential - generates only one sync returning body or header (default)
-   * all - generates one sync method for each async method
-   * none - does not generate any sync methods
-   */
-  "sync-methods"?: string;
-  /**
-   * The maximum number of properties in the request body. If the number of properties in the
-   * request body is less than or equal to this value, these properties will be represented as
-   * method arguments.
-   */
-  "payload-flattening-threshold"?: number;
-  /**
-   * Name to use for the generated client type. By default, uses the value of the "Title" field from
-   * the input files.
-   */
-  "override-client-name"?: string;
-  /**
-   * Indicates whether generated constructors will have an internal protection level.
-   */
-  "use-internal-constructors"?: Switch;
-  /**
-   * Indicates whether to use DateTimeOffset instead of DateTime to model date-time types.
-   */
-  "use-datetimeoffset"?: Switch;
-  /**
-   * Name to use for the generated client models namespace and folder name. By default, uses the
-   * value of 'Models'. This is not currently supported by all code generators.
-   */
-  "models-name"?: string;
-  /**
-   * If set, will cause generated code to be output to a single file. Not supported by all code
-   * generators.
-   */
-  "output-file"?: string;
-  /**
-   * Specifies the format, messages will be printed as. JSON format is easier to process
-   * programmatically.
-   */
-  "message-format"?: string;
-  /**
-   * If set, runs the Azure specific validator plugin.
-   */
-  "azure-validator"?: Switch;
-  /**
-   * Indicates the type of configuration file being passed to the azure-validator so that it can run
-   * the appropriate class of validation rules accordingly.
-   */
-  "openapi-type"?: string;
-  /**
-   * If set, validates the provided OpenAPI definition(s) against provided examples.
-   */
-  "model-validator"?: Switch;
-  /**
-   * If set, semantically verifies the provided OpenAPI definition(s), e.g. checks that a
-   * parameter's specified default value matches the parameter's declared type.
-   */
-  "semantic-validator"?: Switch;
-  /**
-   * Runs the C# code generator.
-   */
-  csharp?: Switch;
-  /**
-   * Runs the Node.js JavaScript code generator.
-   */
-  nodjs?: Switch;
-  /**
-   * Runs the Python code generator.
-   */
-  python?: Switch;
-  /**
-   * Runs the Java code generator.
-   */
-  java?: Switch;
-  /**
-   * Runs the Ruby code generator.
-   */
-  ruby?: Switch;
-  /**
-   * Runs the Go code generator.
-   */
-  go?: Switch;
-  /**
-   * Runs the TypeScript code generator.
-   */
-  typescript?: Switch;
-  /**
-   * Runs the Azure Resource Schema code generator.
-   */
-  azureresourceschema?: Switch;
-  /**
-   * Uses the Azure version of the specified code generator.
-   */
-  "azure-arm"?: Switch;
-  /**
-   * An option that will be passed to AutoRest.
-   */
-  [propertyName: string]: undefined | string | boolean | number;
-}
 
 export interface AdvancedOptions {
   /**
@@ -227,7 +53,7 @@ export interface Project {
    * "--output-folder" which is filled contextually. All options prefixed by "sdkrel:" can be a
    * relative path that will be solved against SDK folder before being sent to Autorest.
    */
-  autorest_options?: AutoRestOptions;
+  autorest_options?: jsDevTools.AutoRestOptions;
   /**
    * An optional list of files/directory to keep when we generate new SDK. This support a
    * Bash-like wildcard syntax (i.e. "my*file.py"). This applies to every Swagger files.
@@ -274,12 +100,16 @@ export interface SwaggerToSDKConfiguration {
      */
     after_scripts?: string[];
     /**
+     * The version of autorest to use. Defaults to the latest published version.
+     */
+    autorest_version?: string;
+    /**
      * An optional dictionary of options you want to pass to Autorest. This will be passed in any
      * call, but can be override by "autorest_options" in each data. Note that you CAN'T override
      * "--output-folder" which is filled contextually. All options prefixed by "sdkrel:" can be a
      * relative path that will be solved against SDK folder before being sent to Autorest.
      */
-    autorest_options?: AutoRestOptions;
+    autorest_options?: jsDevTools.AutoRestOptions;
     /**
      * Environment variables for after_scripts. All options prefixed by "sdkrel:" can be a relative
      * path that will be resolved against SDK folder before being sent to the scripts.
@@ -320,11 +150,14 @@ export interface SwaggerToSDKOptions {
    * The telemetry object that SwaggerToSDK will use. Defaults to NoTelemetry.
    */
   telemetry?: Telemetry;
-
   /**
    * The client that will be used to send HTTP requests.
    */
   httpClient?: jsDevTools.HttpClient;
+  /**
+   * The runner object that will be used to execute external-process commands.
+   */
+  runner?: jsDevTools.Runner;
 }
 
 /**
@@ -380,8 +213,8 @@ export function getGenerationInstanceFolderPath(pullRequestFolderPath: string): 
 export function getRepositoryFolderPath(generationInstanceFolderPath: string, swaggerToSDKConfig: SwaggerToSDKConfiguration): string {
   let repositoryFolderPath = `${generationInstanceFolderPath}`;
   if (swaggerToSDKConfig.meta &&
-      swaggerToSDKConfig.meta.advanced_options &&
-      swaggerToSDKConfig.meta.advanced_options.clone_dir) {
+    swaggerToSDKConfig.meta.advanced_options &&
+    swaggerToSDKConfig.meta.advanced_options.clone_dir) {
     repositoryFolderPath = jsDevTools.joinPath(repositoryFolderPath, swaggerToSDKConfig.meta.advanced_options.clone_dir);
   } else {
     let repositoryNumber = 1;
@@ -399,11 +232,13 @@ export function getRepositoryFolderPath(generationInstanceFolderPath: string, sw
 export class SwaggerToSDK {
   public readonly telemetry: Telemetry;
   public readonly httpClient: jsDevTools.HttpClient;
+  public readonly runner: jsDevTools.Runner | undefined;
 
   constructor(options?: SwaggerToSDKOptions) {
     options = options || {};
     this.telemetry = options.telemetry || new NoTelemetry();
     this.httpClient = options.httpClient || new jsDevTools.NodeHttpClient();
+    this.runner = options.runner;
   }
 
   public logMessage(text: string): void {
@@ -484,7 +319,7 @@ export class SwaggerToSDK {
           if (!mergedReadmeMdFileContents) {
             this.logError(`Merged readme.md response body is empty.`);
           } else {
-            const swaggerToSDKConfiguration: ReadmeMdSwaggerToSDKConfiguration | undefined = findSwaggerToSDKConfiguration(mergedReadmeMdFileContents);
+            const swaggerToSDKConfiguration: jsDevTools.ReadmeMdSwaggerToSDKConfiguration | undefined = jsDevTools.findSwaggerToSDKConfiguration(mergedReadmeMdFileContents);
             if (!swaggerToSDKConfiguration) {
               this.logError(`No SwaggerToSDK configuration YAML block found in the merged readme.md.`);
             } else {
@@ -518,6 +353,7 @@ export class SwaggerToSDK {
                       } else {
                         const repositoryFolderPath = getRepositoryFolderPath(generationInstanceFolderPath, swaggerToSDKConfig);
                         const cloneResult: jsDevTools.RunResult = jsDevTools.gitClone(repositoryUrl, {
+                          runner: this.runner,
                           depth: 1,
                           directory: repositoryFolderPath,
                           quiet: true,
@@ -526,14 +362,54 @@ export class SwaggerToSDK {
                         });
                         if (cloneResult.exitCode !== 0) {
                           this.logError(`Failed to clone ${repositoryUrl} to ${repositoryFolderPath}:`);
-                          for (const errorMessage of cloneResult.stderr.split(/\r?\n/)) {
-                            if (errorMessage) {
-                              this.logError(errorMessage);
+                          if (cloneResult.stderr) {
+                            for (const errorMessage of cloneResult.stderr.split(/\r?\n/)) {
+                              if (errorMessage) {
+                                this.logError(errorMessage);
+                              }
+                            }
+                          }
+                        } else {
+                          let autorestInstallSource = `autorest`;
+                          if (swaggerToSDKConfig.meta.autorest_version) {
+                            autorestInstallSource += `@${swaggerToSDKConfig.meta.autorest_version}`;
+                          }
+                          const installAutorestResult: jsDevTools.RunResult = npmInstall({
+                            runner: this.runner,
+                            installSource: autorestInstallSource,
+                            executionFolderPath: repositoryFolderPath,
+                            showCommand: true,
+                            log: (text: string) => this.logMessage(text)
+                          });
+                          if (installAutorestResult.exitCode !== 0) {
+                            this.logError(`Failed to install ${autorestInstallSource}.`);
+                          } else {
+                            const autorestOptions: jsDevTools.AutoRestOptions = swaggerToSDKConfig.meta.autorest_options || {};
+
+                            for (const autorestOptionName of Object.keys(autorestOptions)) {
+                              const autorestOptionValue: jsDevTools.AutoRestOptionValue = autorestOptions[autorestOptionName];
+                              if (autorestOptionName.startsWith("sdkrel:") && typeof autorestOptionValue === "string") {
+                                const resolvedAutorestOptionName: string = autorestOptionName.substring("sdkrel:".length);
+                                const resolvedAutorestOptionValue: string = jsDevTools.joinPath(repositoryFolderPath, autorestOptionValue);
+                                delete autorestOptions[autorestOptionName];
+                                autorestOptions[resolvedAutorestOptionName] = resolvedAutorestOptionValue;
+                              }
+                            }
+
+                            const autorestResult: jsDevTools.RunResult = jsDevTools.autorest(mergedReadmeMdFileUrl, autorestOptions, {
+                              autorestPath: "./node_modules/.bin/autorest",
+                              runner: this.runner,
+                              executionFolderPath: repositoryFolderPath,
+                              showCommand: true,
+                              log: (text: string) => this.logMessage(text)
+                            });
+                            if (autorestResult.exitCode !== 0) {
+                              this.logError(`Failed to run autorest.`);
+                            } else {
+
                             }
                           }
                         }
-
-
 
                         if (!deleteClonedRepositories) {
                           this.logMessage(`Not deleting clone of ${fullRepositoryName} at folder ${repositoryFolderPath}.`);
