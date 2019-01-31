@@ -1,15 +1,14 @@
-import * as jsDevTools from "@ts-common/azure-js-dev-tools";
-import { assertEx, npmExecutable } from "@ts-common/azure-js-dev-tools";
+import { assertEx, autorestExecutable, BlobStorage, FakeRunner, getInMemoryLogger, getRootPath, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, NodeHttpClient, normalize, npmExecutable, RealGitHub, RealRunner, Runner } from "@ts-common/azure-js-dev-tools";
 import { assert } from "chai";
 import { SwaggerToSDK } from "../lib/swaggerToSDK";
 
-const baseCommit: jsDevTools.GitHubCommit = {
+const baseCommit: GitHubCommit = {
   label: "Azure:master",
   ref: "master",
   sha: "1b8809ee779437bc13f9af9373a5d47472a6b889"
 };
 
-const headCommit: jsDevTools.GitHubCommit = {
+const headCommit: GitHubCommit = {
   label: "pixia:master",
   ref: "master",
   sha: "d82d1491879729cdf44da9a664e815112acde158"
@@ -20,7 +19,7 @@ const pullRequestId = 242467286;
 const pullRequestNumber = 4994;
 const pullRequestTitle = "Fix mysql sku values";
 
-const pullRequest: jsDevTools.GitHubPullRequest = {
+const pullRequest: GitHubPullRequest = {
   base: baseCommit,
   head: headCommit,
   merge_commit_sha: pullRequestMergeCommitSha,
@@ -38,8 +37,8 @@ const pullRequest: jsDevTools.GitHubPullRequest = {
 
 describe("SwaggerToSDK", function () {
   it("getPullRequest()", async function () {
-    const github = new jsDevTools.RealGitHub();
-    const pullRequest: jsDevTools.GitHubPullRequest = await github.getPullRequest("Azure/azure-rest-api-specs", pullRequestNumber);
+    const github = new RealGitHub();
+    const pullRequest: GitHubPullRequest = await github.getPullRequest("Azure/azure-rest-api-specs", pullRequestNumber);
     assert(pullRequest);
     assert(pullRequest.base);
     assert.strictEqual(pullRequest.base.label, "Azure:master");
@@ -60,28 +59,36 @@ describe("SwaggerToSDK", function () {
   });
 
   describe("constructor()", function () {
-    it("with no arguments", function () {
-      const swaggerToSDK = new SwaggerToSDK();
-      assertEx.defined(swaggerToSDK.logger);
-      assert(swaggerToSDK.httpClient instanceof jsDevTools.NodeHttpClient);
+    it("with no options", function () {
+      const blobStorage = new InMemoryBlobStorage();
+      const swaggerToSDK = new SwaggerToSDK(blobStorage);
+      assert.strictEqual(swaggerToSDK.blobStorage, blobStorage);
+      assert.strictEqual(swaggerToSDK.logger, undefined);
+      assert(swaggerToSDK.httpClient instanceof NodeHttpClient);
     });
 
     it("with undefined options argument", function () {
-      const swaggerToSDK = new SwaggerToSDK(undefined);
-      assertEx.defined(swaggerToSDK.logger);
-      assert(swaggerToSDK.httpClient instanceof jsDevTools.NodeHttpClient);
+      const blobStorage = new InMemoryBlobStorage();
+      const swaggerToSDK = new SwaggerToSDK(blobStorage, undefined);
+      assert.strictEqual(swaggerToSDK.blobStorage, blobStorage);
+      assert.strictEqual(swaggerToSDK.logger, undefined);
+      assert(swaggerToSDK.httpClient instanceof NodeHttpClient);
     });
 
     it("with telemetry argument", function () {
-      const logger: jsDevTools.InMemoryLogger = jsDevTools.getInMemoryLogger();
-      const swaggerToSDK = new SwaggerToSDK({ logger });
+      const blobStorage = new InMemoryBlobStorage();
+      const logger: InMemoryLogger = getInMemoryLogger();
+      const swaggerToSDK = new SwaggerToSDK(blobStorage, { logger });
+      assert.strictEqual(swaggerToSDK.blobStorage, blobStorage);
       assert.strictEqual(swaggerToSDK.logger, logger);
-      assert(swaggerToSDK.httpClient instanceof jsDevTools.NodeHttpClient);
+      assert(swaggerToSDK.httpClient instanceof NodeHttpClient);
     });
 
     it("with httpClient argument", function () {
-      const httpClient = new jsDevTools.NodeHttpClient();
-      const swaggerToSDK = new SwaggerToSDK({ httpClient });
+      const blobStorage = new InMemoryBlobStorage();
+      const httpClient = new NodeHttpClient();
+      const swaggerToSDK = new SwaggerToSDK(blobStorage, { httpClient });
+      assert.strictEqual(swaggerToSDK.blobStorage, blobStorage);
       assertEx.defined(swaggerToSDK.logger);
       assert.strictEqual(swaggerToSDK.httpClient, httpClient);
     });
@@ -90,18 +97,19 @@ describe("SwaggerToSDK", function () {
   describe("pullRequestChange()", function () {
     describe("pull request created", function () {
       it("when diff_url returns 404", async function () {
-        const logger: jsDevTools.InMemoryLogger = jsDevTools.getInMemoryLogger();
-        const httpClient: jsDevTools.HttpClient = {
-          sendRequest(request: jsDevTools.HttpRequest): Promise<jsDevTools.HttpResponse> {
+        const blobStorage = new InMemoryBlobStorage();
+        const logger: InMemoryLogger = getInMemoryLogger();
+        const httpClient: HttpClient = {
+          sendRequest(request: HttpRequest): Promise<HttpResponse> {
             return Promise.resolve({
               request,
               statusCode: 404,
-              headers: new jsDevTools.HttpHeaders()
+              headers: new HttpHeaders()
             });
           }
         };
-        const swaggerToSDK = new SwaggerToSDK({ logger, httpClient });
-        const webhookBody: jsDevTools.GitHubPullRequestWebhookBody = {
+        const swaggerToSDK = new SwaggerToSDK(blobStorage, { logger, httpClient });
+        const webhookBody: GitHubPullRequestWebhookBody = {
           action: "opened",
           number: 1,
           pull_request: pullRequest
@@ -115,19 +123,20 @@ describe("SwaggerToSDK", function () {
       });
 
       it("when diff_url returns empty body", async function () {
-        const logger: jsDevTools.InMemoryLogger = jsDevTools.getInMemoryLogger();
-        const httpClient: jsDevTools.HttpClient = {
-          sendRequest(request: jsDevTools.HttpRequest): Promise<jsDevTools.HttpResponse> {
+        const blobStorage = new InMemoryBlobStorage();
+        const logger: InMemoryLogger = getInMemoryLogger();
+        const httpClient: HttpClient = {
+          sendRequest(request: HttpRequest): Promise<HttpResponse> {
             return Promise.resolve({
               request,
               statusCode: 200,
-              headers: new jsDevTools.HttpHeaders(),
+              headers: new HttpHeaders(),
               body: ""
             });
           }
         };
-        const swaggerToSDK = new SwaggerToSDK({ logger, httpClient });
-        const webhookBody: jsDevTools.GitHubPullRequestWebhookBody = {
+        const swaggerToSDK = new SwaggerToSDK(blobStorage, { logger, httpClient });
+        const webhookBody: GitHubPullRequestWebhookBody = {
           action: "opened",
           number: 1,
           pull_request: pullRequest
@@ -141,6 +150,14 @@ describe("SwaggerToSDK", function () {
         ]);
       });
 
+      function createEndToEndBlobStorage(): BlobStorage {
+        return new InMemoryBlobStorage();
+      }
+
+      function createEndToEndHttpClient(): HttpClient {
+        return new NodeHttpClient();
+      }
+
       interface CreateEndToEndRunnerOptions {
         npm: string;
         autorest: string;
@@ -148,12 +165,12 @@ describe("SwaggerToSDK", function () {
         real: boolean;
       }
 
-      function createEndToEndRunner(options: CreateEndToEndRunnerOptions): jsDevTools.Runner {
-        let runner: jsDevTools.Runner;
+      function createEndToEndRunner(options: CreateEndToEndRunnerOptions): Runner {
+        let runner: Runner;
         if (options.real) {
-          runner = new jsDevTools.RealRunner();
+          runner = new RealRunner();
         } else {
-          const fakeRunner = new jsDevTools.FakeRunner();
+          const fakeRunner = new FakeRunner();
           fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python ${options.rootPath}${pullRequestNumber}/1/1`, { exitCode: 0 });
           fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${options.rootPath}${pullRequestNumber}/1/1`, { exitCode: 0 });
           fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-go ${options.rootPath}${pullRequestNumber}/1/src/github.com/Azure/azure-sdk-for-go`, { exitCode: 0 });
@@ -167,6 +184,7 @@ describe("SwaggerToSDK", function () {
           fakeRunner.set(`${options.autorest} --nodejs --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.nodejs@2.2.131 --node-sdks-folder=${options.rootPath}${pullRequestNumber}/1/azure-sdk-for-node https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
           fakeRunner.set(`${options.autorest} --typescript --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.typescript@2.1.1 --typescript-sdks-folder=${options.rootPath}${pullRequestNumber}/1/azure-sdk-for-js https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
           fakeRunner.set(`${options.autorest} --version=preview --use=@microsoft.azure/autorest.ruby@3.0.20 --ruby --multiapi --ruby-sdks-folder=${options.rootPath}${pullRequestNumber}/1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
+          fakeRunner.set(`git status`, { exitCode: 0 });
           runner = fakeRunner;
         }
         return runner;
@@ -174,14 +192,16 @@ describe("SwaggerToSDK", function () {
 
       it("end-to-end", async function () {
         this.timeout(600000);
-        const logger: jsDevTools.InMemoryLogger = jsDevTools.getInMemoryLogger();
-        const httpClient: jsDevTools.HttpClient = new jsDevTools.NodeHttpClient();
-        const rootPath: string = jsDevTools.normalize(jsDevTools.getRootPath(process.cwd())!);
+        const real = true;
+        const blobStorage: BlobStorage = createEndToEndBlobStorage();
+        const logger: InMemoryLogger = getInMemoryLogger();
+        const httpClient: HttpClient = createEndToEndHttpClient();
+        const rootPath: string = normalize(getRootPath(process.cwd())!);
         const npm: string = npmExecutable();
-        const autorest: string = jsDevTools.autorestExecutable({ autorestPath: "./node_modules/.bin/autorest" });
-        const runner: jsDevTools.Runner = createEndToEndRunner({ real: false, npm, autorest, rootPath });
-        const swaggerToSDK = new SwaggerToSDK({ logger, httpClient, runner });
-        const webhookBody: jsDevTools.GitHubPullRequestWebhookBody = {
+        const autorest: string = autorestExecutable({ autorestPath: "./node_modules/.bin/autorest" });
+        const runner: Runner = createEndToEndRunner({ real, npm, autorest, rootPath });
+        const swaggerToSDK = new SwaggerToSDK(blobStorage, { logger, httpClient, runner });
+        const webhookBody: GitHubPullRequestWebhookBody = {
           action: "opened",
           number: 1,
           pull_request: pullRequest
@@ -219,6 +239,52 @@ describe("SwaggerToSDK", function () {
           `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python ${rootPath}${pullRequestNumber}/1/1`,
           `${rootPath}${pullRequestNumber}/1/1: ${npm} install autorest`,
           `${rootPath}${pullRequestNumber}/1/1: ${autorest} --version=preview --use=@microsoft.azure/autorest.python@~3.0.56 --python --python-mode=update --multiapi --python-sdks-folder=${rootPath}${pullRequestNumber}/1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+          `Deleting folder ${rootPath}${pullRequestNumber}/1/1/node_modules...`,
+          `Deleting file ${rootPath}${pullRequestNumber}/1/1/package-lock.json...`,
+          `${rootPath}${pullRequestNumber}/1/1: git status`,
+          `The following files were modified:`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/__init__.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/__init__.py1`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/configuration.py1`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/configuration_paged.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/configuration_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/database.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/database_paged.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/database_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/firewall_rule.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/firewall_rule_paged.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/firewall_rule_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/log_file.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/log_file_paged.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/log_file_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/my_sql_management_client_enums.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/name_availability.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/name_availability_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/name_availability_request.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/name_availability_request_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/operation.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/operation_display.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/operation_display_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/operation_list_result.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/operation_list_result_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/operation_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/performance_tier_properties.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/performance_tier_properties_paged.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/performance_tier_properties_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/performance_tier_service_level_objectives.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/performance_tier_service_level_objectives_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/proxy_resource.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/proxy_resource_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/server.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/server_for_create.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/server_for_create_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/server_paged.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/server_properties_for_create.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/server_properties_for_create_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/server_properties_for_default_create.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/server_properties_for_default_create_py3.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/server_properties_for_geo_restore.py`,
+          `  ${rootPath}${pullRequestNumber}/1/1/azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/server_properties_for_geo_restore_py3.py`,
           `Deleting clone of Azure/azure-sdk-for-python at folder ${rootPath}${pullRequestNumber}/1/1...`,
           `Finished deleting clone of Azure/azure-sdk-for-python at folder ${rootPath}${pullRequestNumber}/1/1.`,
           `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${rootPath}${pullRequestNumber}/1/1`,

@@ -24,12 +24,13 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@ts-common/azure-js-dev-tools": "^3.2.3",
+    "@ts-common/azure-js-dev-tools": "^5.0.0",
     "@types/commonmark": "^0.27.1",
     "@types/js-yaml": "^3.11.4",
     "commonmark": "^0.28.1",
     "js-yaml": "^3.12.1",
-    "yaml-ast-parser": "0.0.43"
+    "yaml-ast-parser": "0.0.43",
+    "@azure/storage-blob": "^10.3.0"
   },
   "devDependencies": {
     "@types/chai": "^4.1.7",
