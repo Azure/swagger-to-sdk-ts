@@ -1,6 +1,6 @@
-import { assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, FakeRunner, getInMemoryLogger, getRootPath, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, NodeHttpClient, normalize, npmExecutable, RealGitHub, RealRunner, Runner } from "@ts-common/azure-js-dev-tools";
+import { assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, FakeRunner, getInMemoryLogger, getRootPath, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, NodeHttpClient, normalize, npmExecutable, RealGitHub, RealRunner, Runner, getParentFolderPath, deleteFolder } from "@ts-common/azure-js-dev-tools";
 import { assert } from "chai";
-import { allLogsName, SwaggerToSDK } from "../lib/swaggerToSDK";
+import { allLogsName, SwaggerToSDK, getWorkingFolderPath } from "../lib/swaggerToSDK";
 
 const baseCommit: GitHubCommit = {
   label: "Azure:master",
@@ -184,7 +184,7 @@ describe("SwaggerToSDK", function () {
       interface CreateEndToEndRunnerOptions {
         npm: string;
         autorest: string;
-        rootPath: string;
+        baseWorkingFolderPath: string;
         real: boolean;
       }
 
@@ -194,19 +194,19 @@ describe("SwaggerToSDK", function () {
           runner = new RealRunner();
         } else {
           const fakeRunner = new FakeRunner();
-          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python ${options.rootPath}1/1`, { exitCode: 0 });
-          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${options.rootPath}1/1`, { exitCode: 0 });
-          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-go ${options.rootPath}1/src/github.com/Azure/azure-sdk-for-go`, { exitCode: 0 });
-          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-node ${options.rootPath}1/azure-sdk-for-node`, { exitCode: 0 });
-          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-js ${options.rootPath}1/azure-sdk-for-js`, { exitCode: 0 });
-          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-ruby ${options.rootPath}1/1`, { exitCode: 0 });
+          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python ${options.baseWorkingFolderPath}1/1`, { exitCode: 0 });
+          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${options.baseWorkingFolderPath}1/1`, { exitCode: 0 });
+          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-go ${options.baseWorkingFolderPath}1/src/github.com/Azure/azure-sdk-for-go`, { exitCode: 0 });
+          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-node ${options.baseWorkingFolderPath}1/azure-sdk-for-node`, { exitCode: 0 });
+          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-js ${options.baseWorkingFolderPath}1/azure-sdk-for-js`, { exitCode: 0 });
+          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-ruby ${options.baseWorkingFolderPath}1/1`, { exitCode: 0 });
           fakeRunner.set(`${options.npm} install autorest`, { exitCode: 0 });
-          fakeRunner.set(`${options.autorest} --version=preview --use=@microsoft.azure/autorest.python@~3.0.56 --python --python-mode=update --multiapi --python-sdks-folder=${options.rootPath}1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
-          fakeRunner.set(`${options.autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${options.rootPath}1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
-          fakeRunner.set(`${options.autorest} --use=@microsoft.azure/autorest.go@~2.1.127 --go --verbose --multiapi --use-onever --preview-chk --go-sdk-folder=${options.rootPath}1/src/github.com/Azure/azure-sdk-for-go https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
-          fakeRunner.set(`${options.autorest} --nodejs --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.nodejs@2.2.131 --node-sdks-folder=${options.rootPath}1/azure-sdk-for-node https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
-          fakeRunner.set(`${options.autorest} --typescript --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.typescript@2.1.1 --typescript-sdks-folder=${options.rootPath}1/azure-sdk-for-js https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
-          fakeRunner.set(`${options.autorest} --version=preview --use=@microsoft.azure/autorest.ruby@3.0.20 --ruby --multiapi --ruby-sdks-folder=${options.rootPath}1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
+          fakeRunner.set(`${options.autorest} --version=preview --use=@microsoft.azure/autorest.python@~3.0.56 --python --python-mode=update --multiapi --python-sdks-folder=${options.baseWorkingFolderPath}1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
+          fakeRunner.set(`${options.autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${options.baseWorkingFolderPath}1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
+          fakeRunner.set(`${options.autorest} --use=@microsoft.azure/autorest.go@~2.1.127 --go --verbose --multiapi --use-onever --preview-chk --go-sdk-folder=${options.baseWorkingFolderPath}1/src/github.com/Azure/azure-sdk-for-go https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
+          fakeRunner.set(`${options.autorest} --nodejs --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.nodejs@2.2.131 --node-sdks-folder=${options.baseWorkingFolderPath}1/azure-sdk-for-node https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
+          fakeRunner.set(`${options.autorest} --typescript --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.typescript@2.1.1 --typescript-sdks-folder=${options.baseWorkingFolderPath}1/azure-sdk-for-js https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
+          fakeRunner.set(`${options.autorest} --version=preview --use=@microsoft.azure/autorest.ruby@3.0.20 --ruby --multiapi --ruby-sdks-folder=${options.baseWorkingFolderPath}1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
           fakeRunner.set(`git status`, { exitCode: 0 });
           runner = fakeRunner;
         }
@@ -221,10 +221,12 @@ describe("SwaggerToSDK", function () {
         try {
           const logger: InMemoryLogger = getInMemoryLogger();
           const httpClient: HttpClient = createEndToEndHttpClient();
-          const rootPath: string = normalize(getRootPath(process.cwd())!);
+          const workingFolderPath: string = await getWorkingFolderPath(getRootPath(process.cwd())!);
+          await deleteFolder(workingFolderPath);
+          const baseWorkingFolderPath: string = getParentFolderPath(workingFolderPath);
           const npm: string = npmExecutable();
           const autorest: string = autorestExecutable({ autorestPath: "./node_modules/.bin/autorest" });
-          const runner: Runner = createEndToEndRunner({ real, npm, autorest, rootPath });
+          const runner: Runner = createEndToEndRunner({ real, npm, autorest, baseWorkingFolderPath });
           const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger, httpClient, runner });
           const webhookBody: GitHubPullRequestWebhookBody = {
             action: "opened",
@@ -232,7 +234,7 @@ describe("SwaggerToSDK", function () {
             pull_request: pullRequest
           };
 
-          await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: rootPath });
+          await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: baseWorkingFolderPath });
 
           assert.strictEqual(await workingPrefix.getContainer().exists(), true);
           const allLogsBlob: BlobStorageBlob = workingPrefix.getBlob(`Azure/azure-rest-api-specs/${pullRequest.number}/1/${allLogsName}`);
@@ -267,42 +269,42 @@ describe("SwaggerToSDK", function () {
             `azure-sdk-for-go`,
             `azure-sdk-for-js`,
             `azure-sdk-for-node`,
-            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python ${rootPath}1/1`,
-            `${rootPath}1/1: ${npm} install autorest`,
-            `${rootPath}1/1: ${autorest} --version=preview --use=@microsoft.azure/autorest.python@~3.0.56 --python --python-mode=update --multiapi --python-sdks-folder=${rootPath}1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
-            `${rootPath}1/1: git status`,
-            `Deleting clone of Azure/azure-sdk-for-python at folder ${rootPath}1/1...`,
-            `Finished deleting clone of Azure/azure-sdk-for-python at folder ${rootPath}1/1.`,
-            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${rootPath}1/1`,
-            `${rootPath}1/1: ${npm} install autorest`,
-            `${rootPath}1/1: ${autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${rootPath}1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
-            `Deleting clone of Azure/azure-sdk-for-java at folder ${rootPath}1/1...`,
-            `Finished deleting clone of Azure/azure-sdk-for-java at folder ${rootPath}1/1.`,
-            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-go ${rootPath}1/src/github.com/Azure/azure-sdk-for-go`,
-            `${rootPath}1/src/github.com/Azure/azure-sdk-for-go: ${npm} install autorest`,
-            `${rootPath}1/src/github.com/Azure/azure-sdk-for-go: ${autorest} --use=@microsoft.azure/autorest.go@~2.1.127 --go --verbose --multiapi --use-onever --preview-chk --go-sdk-folder=${rootPath}1/src/github.com/Azure/azure-sdk-for-go https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
-            `Deleting clone of Azure/azure-sdk-for-go at folder ${rootPath}1/src/github.com/Azure/azure-sdk-for-go...`,
-            `Finished deleting clone of Azure/azure-sdk-for-go at folder ${rootPath}1/src/github.com/Azure/azure-sdk-for-go.`,
-            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-js ${rootPath}1/azure-sdk-for-js`,
-            `${rootPath}1/azure-sdk-for-js: ${npm} install autorest`,
-            `${rootPath}1/azure-sdk-for-js: ${autorest} --typescript --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.typescript@2.1.1 --typescript-sdks-folder=${rootPath}1/azure-sdk-for-js https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
-            `Deleting clone of Azure/azure-sdk-for-js at folder ${rootPath}1/azure-sdk-for-js...`,
-            `Finished deleting clone of Azure/azure-sdk-for-js at folder ${rootPath}1/azure-sdk-for-js.`,
-            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-node ${rootPath}1/azure-sdk-for-node`,
-            `${rootPath}1/azure-sdk-for-node: ${npm} install autorest`,
-            `${rootPath}1/azure-sdk-for-node: ${autorest} --nodejs --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.nodejs@2.2.131 --node-sdks-folder=${rootPath}1/azure-sdk-for-node https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
-            `Deleting clone of Azure/azure-sdk-for-node at folder ${rootPath}1/azure-sdk-for-node...`,
-            `Finished deleting clone of Azure/azure-sdk-for-node at folder ${rootPath}1/azure-sdk-for-node.`,
-            `Deleting working folder ${rootPath}1...`,
-            `Finished deleting working folder ${rootPath}1.`
+            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python ${baseWorkingFolderPath}1/1`,
+            `${baseWorkingFolderPath}1/1: ${npm} install autorest`,
+            `${baseWorkingFolderPath}1/1: ${autorest} --version=preview --use=@microsoft.azure/autorest.python@~3.0.56 --python --python-mode=update --multiapi --python-sdks-folder=${baseWorkingFolderPath}1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+            `${baseWorkingFolderPath}1/1: git status`,
+            `Deleting clone of Azure/azure-sdk-for-python at folder ${baseWorkingFolderPath}1/1...`,
+            `Finished deleting clone of Azure/azure-sdk-for-python at folder ${baseWorkingFolderPath}1/1.`,
+            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${baseWorkingFolderPath}1/1`,
+            `${baseWorkingFolderPath}1/1: ${npm} install autorest`,
+            `${baseWorkingFolderPath}1/1: ${autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${baseWorkingFolderPath}1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+            `Deleting clone of Azure/azure-sdk-for-java at folder ${baseWorkingFolderPath}1/1...`,
+            `Finished deleting clone of Azure/azure-sdk-for-java at folder ${baseWorkingFolderPath}1/1.`,
+            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-go ${baseWorkingFolderPath}1/src/github.com/Azure/azure-sdk-for-go`,
+            `${baseWorkingFolderPath}1/src/github.com/Azure/azure-sdk-for-go: ${npm} install autorest`,
+            `${baseWorkingFolderPath}1/src/github.com/Azure/azure-sdk-for-go: ${autorest} --use=@microsoft.azure/autorest.go@~2.1.127 --go --verbose --multiapi --use-onever --preview-chk --go-sdk-folder=${baseWorkingFolderPath}1/src/github.com/Azure/azure-sdk-for-go https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+            `Deleting clone of Azure/azure-sdk-for-go at folder ${baseWorkingFolderPath}1/src/github.com/Azure/azure-sdk-for-go...`,
+            `Finished deleting clone of Azure/azure-sdk-for-go at folder ${baseWorkingFolderPath}1/src/github.com/Azure/azure-sdk-for-go.`,
+            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-js ${baseWorkingFolderPath}1/azure-sdk-for-js`,
+            `${baseWorkingFolderPath}1/azure-sdk-for-js: ${npm} install autorest`,
+            `${baseWorkingFolderPath}1/azure-sdk-for-js: ${autorest} --typescript --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.typescript@2.1.1 --typescript-sdks-folder=${baseWorkingFolderPath}1/azure-sdk-for-js https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+            `Deleting clone of Azure/azure-sdk-for-js at folder ${baseWorkingFolderPath}1/azure-sdk-for-js...`,
+            `Finished deleting clone of Azure/azure-sdk-for-js at folder ${baseWorkingFolderPath}1/azure-sdk-for-js.`,
+            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-node ${baseWorkingFolderPath}1/azure-sdk-for-node`,
+            `${baseWorkingFolderPath}1/azure-sdk-for-node: ${npm} install autorest`,
+            `${baseWorkingFolderPath}1/azure-sdk-for-node: ${autorest} --nodejs --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.nodejs@2.2.131 --node-sdks-folder=${baseWorkingFolderPath}1/azure-sdk-for-node https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+            `Deleting clone of Azure/azure-sdk-for-node at folder ${baseWorkingFolderPath}1/azure-sdk-for-node...`,
+            `Finished deleting clone of Azure/azure-sdk-for-node at folder ${baseWorkingFolderPath}1/azure-sdk-for-node.`,
+            `Deleting working folder ${baseWorkingFolderPath}1...`,
+            `Finished deleting working folder ${baseWorkingFolderPath}1.`
           ];
           assertEx.containsAll(logger.allLogs, expectedLogs);
           assertEx.containsAll(await allLogsBlob.getContentsAsString(), expectedLogs);
           assertEx.containsAll(await javaLogsBlob.getContentsAsString(), [
-            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${rootPath}1/1`,
-            `${rootPath}1/1: ${npm} install autorest`,
-            `${rootPath}1/1: ${autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${rootPath}1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
-            `Deleting clone of Azure/azure-sdk-for-java at folder ${rootPath}1/1...`,
+            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${baseWorkingFolderPath}1/1`,
+            `${baseWorkingFolderPath}1/1: ${npm} install autorest`,
+            `${baseWorkingFolderPath}1/1: ${autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${baseWorkingFolderPath}1/1 https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+            `Deleting clone of Azure/azure-sdk-for-java at folder ${baseWorkingFolderPath}1/1...`,
           ]);
         } finally {
           await workingPrefix.getContainer().delete();
