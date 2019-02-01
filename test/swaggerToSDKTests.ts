@@ -295,8 +295,8 @@ describe("SwaggerToSDK", function () {
             `${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-node")}: ${autorest} --nodejs --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.nodejs@2.2.131 --node-sdks-folder=${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-node")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
             `Deleting clone of Azure/azure-sdk-for-node at folder ${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-node")}...`,
             `Finished deleting clone of Azure/azure-sdk-for-node at folder ${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-node")}.`,
-            `Deleting working folder ${baseWorkingFolderPath}1...`,
-            `Finished deleting working folder ${baseWorkingFolderPath}1.`
+            `Deleting working folder ${joinPath(baseWorkingFolderPath, "1")}...`,
+            `Finished deleting working folder ${joinPath(baseWorkingFolderPath, "1")}.`
           ];
           assertEx.containsAll(logger.allLogs, expectedLogs);
           assertEx.containsAll(await allLogsBlob.getContentsAsString(), expectedLogs);
