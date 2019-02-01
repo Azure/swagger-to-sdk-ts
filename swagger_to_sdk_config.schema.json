@@ -79,11 +79,17 @@
         },
         "generated_relative_base_directory": {
           "$ref": "#/definitions/generated_relative_base_directory"
+        },
+        "package_root_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A file that marks the root of a package. In Node.js this is package.json. In Python it's setup.py."
         }
       },
       "additionalProperties": false,
       "required": [
-        "version"
+        "version",
+        "package_root_file"
       ]
     },
     "projects": {
