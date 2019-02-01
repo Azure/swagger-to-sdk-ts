@@ -1,5 +1,5 @@
 import * as jsDevTools from "@ts-common/azure-js-dev-tools";
-import { getGitHubRepository, getRepositoryFullName, GitHubRepository, HttpResponse, npmInstall, gitCheckout } from "@ts-common/azure-js-dev-tools";
+import { BlobStoragePrefix, getCompositeLogger, getGitHubRepository, getRepositoryFullName, gitCheckout, GitHubRepository, HttpResponse, npmInstall } from "@ts-common/azure-js-dev-tools";
 
 export interface AdvancedOptions {
   /**
@@ -238,7 +238,8 @@ export class BlobLogger implements jsDevTools.Logger {
 
   private log(text: string): Promise<void> {
     this.logs.push(text);
-    return this.blob.setContentsFromString(this.logs.join("\n"));
+
+    return this.blob.setContentsFromString(`<html><body>${this.logs.join("<br/>")}</body></html>`);
   }
 
   logInfo(text: string): Promise<void> {
@@ -268,31 +269,27 @@ export class BlobLogger implements jsDevTools.Logger {
  */
 export const pullRequestsContainerName = "pullrequests";
 
-export const allLogsName = "all.logs.txt";
+export const allLogsName = "all.logs.html";
 
 /**
  * The collection of functions that implement the Swagger To SDK service.
  */
 export class SwaggerToSDK {
-  public readonly blobStorage: jsDevTools.BlobStorage;
+  public readonly workingPrefix: jsDevTools.BlobStoragePrefix;
   public readonly logger: jsDevTools.Logger | undefined;
   public readonly httpClient: jsDevTools.HttpClient;
   public readonly runner: jsDevTools.Runner | undefined;
 
-  constructor(blobStorage: jsDevTools.BlobStorage, options?: SwaggerToSDKOptions) {
+  constructor(workingPrefix: jsDevTools.BlobStoragePrefix, options?: SwaggerToSDKOptions) {
     options = options || {};
-    this.blobStorage = blobStorage;
+    this.workingPrefix = workingPrefix;
     this.logger = options.logger;
     this.httpClient = options.httpClient || new jsDevTools.NodeHttpClient();
     this.runner = options.runner;
   }
 
-  private getPullRequestsContainer(): jsDevTools.BlobStorageContainer {
-    return this.blobStorage.getContainer(pullRequestsContainerName);
-  }
-
   private getPullRequestPrefix(repository: jsDevTools.GitHubRepository, pullRequestNumber: number): jsDevTools.BlobStoragePrefix {
-    return this.getPullRequestsContainer()
+    return this.workingPrefix
       .getPrefix(jsDevTools.getRepositoryFullName(repository) + "/")
       .getPrefix(pullRequestNumber.toString() + "/");
   }
@@ -302,18 +299,25 @@ export class SwaggerToSDK {
       .getPrefix(generationInstance.toString() + "/");
   }
 
-  private getLogBlob(repository: jsDevTools.GitHubRepository, pullRequestNumber: number, generationInstance: number): jsDevTools.BlobStorageBlob {
-    return this.getGenerationInstancePrefix(repository, pullRequestNumber, generationInstance).getBlob(allLogsName);
+  private getAllLogsBlob(generationInstancePrefix: BlobStoragePrefix): jsDevTools.BlobStorageBlob {
+    return generationInstancePrefix.getBlob(allLogsName);
+  }
+
+  private getRepositoryLogsBlob(generationInstancePrefix: BlobStoragePrefix, repository: GitHubRepository): jsDevTools.BlobStorageBlob {
+    return generationInstancePrefix.getBlob(`${getRepositoryFullName(repository).toLowerCase().replace("/", ".")}.logs.html`);
   }
 
   private async createGenerationInstance(repository: jsDevTools.GitHubRepository, pullRequestNumber: number): Promise<number> {
-    // Create the container if it doesn't already exist.
-    await this.getPullRequestsContainer().create();
+    // Create the working prefix's container if it doesn't already exist.
+    await this.workingPrefix.getContainer().create();
 
     let generationInstance = 1;
-    while (!await this.getLogBlob(repository, pullRequestNumber, generationInstance).create()) {
+    let generationInstancePrefix: BlobStoragePrefix = this.getGenerationInstancePrefix(repository, pullRequestNumber, generationInstance);
+    while (!await this.getAllLogsBlob(generationInstancePrefix).create()) {
       ++generationInstance;
+      generationInstancePrefix = this.getGenerationInstancePrefix(repository, pullRequestNumber, generationInstance);
     }
+
     return generationInstance;
   }
 
@@ -324,7 +328,7 @@ export class SwaggerToSDK {
   public async pullRequestChange(pullRequestChangeBody: jsDevTools.GitHubPullRequestWebhookBody, options?: SwaggerToSDKPullRequestChangeOptions): Promise<void> {
     options = options || {};
 
-    const deleteClonedRepositories: boolean = options.deleteClonedRepositories != undefined ? options.deleteClonedRepositories : true;
+    const deleteWorkingFolder: boolean = options.deleteClonedRepositories != undefined ? options.deleteClonedRepositories : true;
 
     const apiPullRequest: jsDevTools.GitHubPullRequest = pullRequestChangeBody.pull_request;
 
@@ -333,220 +337,221 @@ export class SwaggerToSDK {
     const generationInstance: number = await this.createGenerationInstance(repository, pullRequestNumber);
 
     const workingFolderPath: string = await getWorkingFolderPath(options.workingFolderPath);
-
-    const allLogsLoggers: jsDevTools.Logger[] = [new BlobLogger(this.getLogBlob(repository, pullRequestNumber, generationInstance))];
+    const generationInstancePrefix: BlobStoragePrefix = this.getGenerationInstancePrefix(repository, pullRequestNumber, generationInstance);
+    let logger: jsDevTools.Logger = new BlobLogger(this.getAllLogsBlob(generationInstancePrefix));
     if (this.logger) {
-      allLogsLoggers.push(this.logger);
+      logger = jsDevTools.getCompositeLogger(logger, this.logger);
     }
-    const logger: jsDevTools.Logger = jsDevTools.getCompositeLogger(...allLogsLoggers);
+    try {
+      await logger.logInfo(`Received pull request change webhook request from GitHub for "${apiPullRequest.html_url}".`);
 
-    await logger.logInfo(`Received pull request change webhook request from GitHub for "${apiPullRequest.html_url}".`);
-
-    await logger.logInfo(`Getting diff_url (${apiPullRequest.diff_url}) contents...`);
-    const diffUrlResponse: jsDevTools.HttpResponse = await this.httpClient.sendRequest({ method: "GET", url: apiPullRequest.diff_url });
-    const statusCodeMessage = `diff_url response status code is ${diffUrlResponse.statusCode}.`;
-    if (diffUrlResponse.statusCode !== 200) {
-      await logger.logError(statusCodeMessage);
-    } else {
-      await logger.logInfo(statusCodeMessage);
-      if (!diffUrlResponse.body) {
-        await logger.logError(`diff_url response body is empty.`);
+      await logger.logInfo(`Getting diff_url (${apiPullRequest.diff_url}) contents...`);
+      const diffUrlResponse: jsDevTools.HttpResponse = await this.httpClient.sendRequest({ method: "GET", url: apiPullRequest.diff_url });
+      const statusCodeMessage = `diff_url response status code is ${diffUrlResponse.statusCode}.`;
+      if (diffUrlResponse.statusCode !== 200) {
+        await logger.logError(statusCodeMessage);
       } else {
-        const diffUrlResponseBodyLines: string[] = diffUrlResponse.body.split(/\r?\n/);
-        await logger.logInfo(`diff_url response body contains ${diffUrlResponseBodyLines.length} lines.`);
-        const changedFileDiffLinePrefix = "diff --git";
-        const diffGitLines: string[] = jsDevTools.where(diffUrlResponseBodyLines, (line: string) => line.startsWith(changedFileDiffLinePrefix));
-        await logger.logInfo(`diff_url response body contains ${diffGitLines.length} "${changedFileDiffLinePrefix}" lines.`);
-        const changedFileRelativePaths: string[] = jsDevTools.map(diffGitLines, (line: string) => line.match(diffGitLineRegex)![1]);
-        await logger.logInfo(`diff_url response body contains ${changedFileRelativePaths.length} changed files:`);
-        for (const changedFileRelativePath of changedFileRelativePaths) {
-          await logger.logInfo(changedFileRelativePath);
-        }
-        const specificationChangedFileRelativePaths: string[] = jsDevTools.where(changedFileRelativePaths, (text: string) => text.startsWith("specification/"));
-        await logger.logInfo(`diff_url response body contains ${specificationChangedFileRelativePaths.length} changed files in the specification folder:`);
-        for (const changedFileRelativePath of specificationChangedFileRelativePaths) {
-          await logger.logInfo(changedFileRelativePath);
-        }
-        const readmeMdRelativeFilePathsToGenerate: string[] = [];
-        for (const changedFileRelativePath of specificationChangedFileRelativePaths) {
-          let searchString = "/resource-manager/";
-          let searchStringIndex: number = changedFileRelativePath.indexOf(searchString);
-          if (searchStringIndex === -1) {
-            searchString = "/data-plane/";
-            searchStringIndex = changedFileRelativePath.indexOf(searchString);
+        await logger.logInfo(statusCodeMessage);
+        if (!diffUrlResponse.body) {
+          await logger.logError(`diff_url response body is empty.`);
+        } else {
+          const diffUrlResponseBodyLines: string[] = diffUrlResponse.body.split(/\r?\n/);
+          await logger.logInfo(`diff_url response body contains ${diffUrlResponseBodyLines.length} lines.`);
+          const changedFileDiffLinePrefix = "diff --git";
+          const diffGitLines: string[] = jsDevTools.where(diffUrlResponseBodyLines, (line: string) => line.startsWith(changedFileDiffLinePrefix));
+          await logger.logInfo(`diff_url response body contains ${diffGitLines.length} "${changedFileDiffLinePrefix}" lines.`);
+          const changedFileRelativePaths: string[] = jsDevTools.map(diffGitLines, (line: string) => line.match(diffGitLineRegex)![1]);
+          await logger.logInfo(`diff_url response body contains ${changedFileRelativePaths.length} changed files:`);
+          for (const changedFileRelativePath of changedFileRelativePaths) {
+            await logger.logInfo(changedFileRelativePath);
           }
+          const specificationChangedFileRelativePaths: string[] = jsDevTools.where(changedFileRelativePaths, (text: string) => text.startsWith("specification/"));
+          await logger.logInfo(`diff_url response body contains ${specificationChangedFileRelativePaths.length} changed files in the specification folder:`);
+          for (const changedFileRelativePath of specificationChangedFileRelativePaths) {
+            await logger.logInfo(changedFileRelativePath);
+          }
+          const readmeMdRelativeFilePathsToGenerate: string[] = [];
+          for (const changedFileRelativePath of specificationChangedFileRelativePaths) {
+            let searchString = "/resource-manager/";
+            let searchStringIndex: number = changedFileRelativePath.indexOf(searchString);
+            if (searchStringIndex === -1) {
+              searchString = "/data-plane/";
+              searchStringIndex = changedFileRelativePath.indexOf(searchString);
+            }
 
-          if (searchStringIndex !== -1) {
-            const readmeMdRelativeFilePath = changedFileRelativePath.substr(0, searchStringIndex + searchString.length) + "readme.md";
-            if (readmeMdRelativeFilePathsToGenerate.indexOf(readmeMdRelativeFilePath) === -1) {
-              readmeMdRelativeFilePathsToGenerate.push(readmeMdRelativeFilePath);
+            if (searchStringIndex !== -1) {
+              const readmeMdRelativeFilePath = changedFileRelativePath.substr(0, searchStringIndex + searchString.length) + "readme.md";
+              if (readmeMdRelativeFilePathsToGenerate.indexOf(readmeMdRelativeFilePath) === -1) {
+                readmeMdRelativeFilePathsToGenerate.push(readmeMdRelativeFilePath);
+              }
             }
           }
-        }
-        await logger.logInfo(`Found ${readmeMdRelativeFilePathsToGenerate.length} readme.md files to generate:`);
-        for (const readmeMdRelativeFilePathToGenerate of readmeMdRelativeFilePathsToGenerate) {
-          logger.logInfo(readmeMdRelativeFilePathToGenerate);
-        }
-        for (const readmeMdRelativeFilePathToGenerate of readmeMdRelativeFilePathsToGenerate) {
-          await logger.logInfo(`Looking for languages to generate in "${readmeMdRelativeFilePathToGenerate}"...`);
-          const mergedReadmeMdFileUrl = `https://raw.githubusercontent.com/azure/azure-rest-api-specs/${apiPullRequest.merge_commit_sha}/${readmeMdRelativeFilePathToGenerate}`;
-          await logger.logInfo(`Getting file contents for "${mergedReadmeMdFileUrl}"...`);
-          const mergedReadmeMdFileResponse: HttpResponse = await this.httpClient.sendRequest({ method: "GET", url: mergedReadmeMdFileUrl });
-          await logger.logInfo(`Merged readme.md response status code is ${mergedReadmeMdFileResponse.statusCode}.`);
-          const mergedReadmeMdFileContents: string | undefined = mergedReadmeMdFileResponse.body;
-          if (!mergedReadmeMdFileContents) {
-            await logger.logError(`Merged readme.md response body is empty.`);
-          } else {
-            const swaggerToSDKConfiguration: jsDevTools.ReadmeMdSwaggerToSDKConfiguration | undefined = jsDevTools.findSwaggerToSDKConfiguration(mergedReadmeMdFileContents);
-            if (!swaggerToSDKConfiguration) {
-              await logger.logError(`No SwaggerToSDK configuration YAML block found in the merged readme.md.`);
+          await logger.logInfo(`Found ${readmeMdRelativeFilePathsToGenerate.length} readme.md files to generate:`);
+          for (const readmeMdRelativeFilePathToGenerate of readmeMdRelativeFilePathsToGenerate) {
+            await logger.logInfo(readmeMdRelativeFilePathToGenerate);
+          }
+          for (const readmeMdRelativeFilePathToGenerate of readmeMdRelativeFilePathsToGenerate) {
+            await logger.logInfo(`Looking for languages to generate in "${readmeMdRelativeFilePathToGenerate}"...`);
+            const mergedReadmeMdFileUrl = `https://raw.githubusercontent.com/azure/azure-rest-api-specs/${apiPullRequest.merge_commit_sha}/${readmeMdRelativeFilePathToGenerate}`;
+            await logger.logInfo(`Getting file contents for "${mergedReadmeMdFileUrl}"...`);
+            const mergedReadmeMdFileResponse: HttpResponse = await this.httpClient.sendRequest({ method: "GET", url: mergedReadmeMdFileUrl });
+            await logger.logInfo(`Merged readme.md response status code is ${mergedReadmeMdFileResponse.statusCode}.`);
+            const mergedReadmeMdFileContents: string | undefined = mergedReadmeMdFileResponse.body;
+            if (!mergedReadmeMdFileContents) {
+              await logger.logError(`Merged readme.md response body is empty.`);
             } else {
-              await logger.logInfo(`Found ${swaggerToSDKConfiguration.repositories.length} requested SDK repositories:`);
-              for (const requestedRepository of swaggerToSDKConfiguration.repositories) {
-                await logger.logInfo(requestedRepository.repo);
-              }
-              for (const requestedRepository of swaggerToSDKConfiguration.repositories) {
-                const repository: GitHubRepository = getGitHubRepository(requestedRepository.repo);
-                if (!repository.organization) {
-                  repository.organization = "Azure";
+              const swaggerToSDKConfiguration: jsDevTools.ReadmeMdSwaggerToSDKConfiguration | undefined = jsDevTools.findSwaggerToSDKConfiguration(mergedReadmeMdFileContents);
+              if (!swaggerToSDKConfiguration) {
+                await logger.logError(`No SwaggerToSDK configuration YAML block found in the merged readme.md.`);
+              } else {
+                await logger.logInfo(`Found ${swaggerToSDKConfiguration.repositories.length} requested SDK repositories:`);
+                for (const requestedRepository of swaggerToSDKConfiguration.repositories) {
+                  await logger.logInfo(requestedRepository.repo);
                 }
-                const fullRepositoryName: string = getRepositoryFullName(repository);
-                const repositoryUrl = `https://github.com/${fullRepositoryName}`;
-                const repositoryExistsResponse: HttpResponse = await this.httpClient.sendRequest({ method: "HEAD", url: repositoryUrl });
-                if (repositoryExistsResponse.statusCode !== 200) {
-                  await logger.logError(`Could not find a repository at ${repositoryUrl}.`);
-                } else {
-                  const swaggerToSDKConfigFileUrl = `https://raw.githubusercontent.com/${fullRepositoryName}/master/swagger_to_sdk_config.json`;
-                  const swaggerToSDKConfigFileResponse: HttpResponse = await this.httpClient.sendRequest({ method: "GET", url: swaggerToSDKConfigFileUrl });
-                  if (swaggerToSDKConfigFileResponse.statusCode !== 200) {
-                    await logger.logError(`Could not find a swagger_to_sdk_config.json file at ${swaggerToSDKConfigFileUrl}.`);
+                for (const requestedRepository of swaggerToSDKConfiguration.repositories) {
+                  const repository: GitHubRepository = getGitHubRepository(requestedRepository.repo);
+                  if (!repository.organization) {
+                    repository.organization = "Azure";
+                  }
+                  const repoLogger: jsDevTools.Logger = getCompositeLogger(logger, new BlobLogger(this.getRepositoryLogsBlob(generationInstancePrefix, repository)));
+                  const fullRepositoryName: string = getRepositoryFullName(repository);
+                  const repositoryUrl = `https://github.com/${fullRepositoryName}`;
+                  const repositoryExistsResponse: HttpResponse = await this.httpClient.sendRequest({ method: "HEAD", url: repositoryUrl });
+                  if (repositoryExistsResponse.statusCode !== 200) {
+                    await repoLogger.logError(`Could not find a repository at ${repositoryUrl}.`);
                   } else {
-                    const swaggerToSDKConfigFileContents: string | undefined = swaggerToSDKConfigFileResponse.body;
-                    if (!swaggerToSDKConfigFileContents) {
-                      await logger.logError(`The swagger_to_sdk_config.json file at ${swaggerToSDKConfigFileUrl} is empty.`);
+                    const swaggerToSDKConfigFileUrl = `https://raw.githubusercontent.com/${fullRepositoryName}/master/swagger_to_sdk_config.json`;
+                    const swaggerToSDKConfigFileResponse: HttpResponse = await this.httpClient.sendRequest({ method: "GET", url: swaggerToSDKConfigFileUrl });
+                    if (swaggerToSDKConfigFileResponse.statusCode !== 200) {
+                      await repoLogger.logError(`Could not find a swagger_to_sdk_config.json file at ${swaggerToSDKConfigFileUrl}.`);
                     } else {
-                      const swaggerToSDKConfig: SwaggerToSDKConfiguration = JSON.parse(swaggerToSDKConfigFileContents);
-                      if (!swaggerToSDKConfig.meta) {
-                        await logger.logError(`No meta property exists in ${swaggerToSDKConfigFileUrl}.`);
+                      const swaggerToSDKConfigFileContents: string | undefined = swaggerToSDKConfigFileResponse.body;
+                      if (!swaggerToSDKConfigFileContents) {
+                        await repoLogger.logError(`The swagger_to_sdk_config.json file at ${swaggerToSDKConfigFileUrl} is empty.`);
                       } else {
-                        const repositoryFolderPath = getRepositoryFolderPath(workingFolderPath, swaggerToSDKConfig);
-                        const cloneResult: jsDevTools.RunResult = await jsDevTools.gitClone(repositoryUrl, {
-                          runner: this.runner,
-                          depth: 1,
-                          directory: repositoryFolderPath,
-                          quiet: true,
-                          log: logger.logInfo,
-                          showCommand: true
-                        });
-                        if (cloneResult.exitCode !== 0) {
-                          await logger.logError(`Failed to clone ${repositoryUrl} to ${repositoryFolderPath}:`);
-                          if (cloneResult.stderr) {
-                            for (const errorMessage of cloneResult.stderr.split(/\r?\n/)) {
-                              if (errorMessage) {
-                                await logger.logError(errorMessage);
-                              }
-                            }
-                          }
+                        const swaggerToSDKConfig: SwaggerToSDKConfiguration = JSON.parse(swaggerToSDKConfigFileContents);
+                        if (!swaggerToSDKConfig.meta) {
+                          await repoLogger.logError(`No meta property exists in ${swaggerToSDKConfigFileUrl}.`);
                         } else {
-                          let autorestInstallSource = `autorest`;
-                          if (swaggerToSDKConfig.meta.autorest_version) {
-                            autorestInstallSource += `@${swaggerToSDKConfig.meta.autorest_version}`;
-                          }
-                          const installAutorestResult: jsDevTools.RunResult = await npmInstall({
+                          const repositoryFolderPath = getRepositoryFolderPath(workingFolderPath, swaggerToSDKConfig);
+                          const cloneResult: jsDevTools.RunResult = await jsDevTools.gitClone(repositoryUrl, {
                             runner: this.runner,
-                            installSource: autorestInstallSource,
-                            executionFolderPath: repositoryFolderPath,
-                            showCommand: true,
-                            log: logger.logInfo
+                            depth: 1,
+                            directory: repositoryFolderPath,
+                            quiet: true,
+                            log: repoLogger.logInfo,
+                            showCommand: true
                           });
-                          if (installAutorestResult.exitCode !== 0) {
-                            await logger.logError(`Failed to install ${autorestInstallSource}.`);
-                          } else {
-                            const autorestOptions: jsDevTools.AutoRestOptions = swaggerToSDKConfig.meta.autorest_options || {};
-
-                            for (const autorestOptionName of Object.keys(autorestOptions)) {
-                              const autorestOptionValue: jsDevTools.AutoRestOptionValue = autorestOptions[autorestOptionName];
-                              if (autorestOptionName.startsWith("sdkrel:") && typeof autorestOptionValue === "string") {
-                                const resolvedAutorestOptionName: string = autorestOptionName.substring("sdkrel:".length);
-                                const resolvedAutorestOptionValue: string = jsDevTools.joinPath(repositoryFolderPath, autorestOptionValue);
-                                delete autorestOptions[autorestOptionName];
-                                autorestOptions[resolvedAutorestOptionName] = resolvedAutorestOptionValue;
+                          if (cloneResult.exitCode !== 0) {
+                            await repoLogger.logError(`Failed to clone ${repositoryUrl} to ${repositoryFolderPath}:`);
+                            if (cloneResult.stderr) {
+                              for (const errorMessage of cloneResult.stderr.split(/\r?\n/)) {
+                                if (errorMessage) {
+                                  await repoLogger.logError(errorMessage);
+                                }
                               }
                             }
-
-                            const autorestResult: jsDevTools.RunResult = await jsDevTools.autorest(mergedReadmeMdFileUrl, autorestOptions, {
-                              autorestPath: "./node_modules/.bin/autorest",
+                          } else {
+                            let autorestInstallSource = `autorest`;
+                            if (swaggerToSDKConfig.meta.autorest_version) {
+                              autorestInstallSource += `@${swaggerToSDKConfig.meta.autorest_version}`;
+                            }
+                            const installAutorestResult: jsDevTools.RunResult = await npmInstall({
                               runner: this.runner,
+                              installSource: autorestInstallSource,
                               executionFolderPath: repositoryFolderPath,
                               showCommand: true,
-                              log: logger.logInfo
+                              log: repoLogger.logInfo
                             });
-
-                            const nodeModulesFolderPath: string = jsDevTools.joinPath(repositoryFolderPath, "node_modules");
-                            if (jsDevTools.folderExistsSync(nodeModulesFolderPath)) {
-                              await logger.logInfo(`Deleting folder ${nodeModulesFolderPath}...`);
-                              jsDevTools.deleteFolder(nodeModulesFolderPath);
-                            }
-                            const packageLockJsonFilePath: string = jsDevTools.joinPath(repositoryFolderPath, "package-lock.json");
-                            if (jsDevTools.fileExistsSync(packageLockJsonFilePath)) {
-                              await logger.logInfo(`Deleting file ${packageLockJsonFilePath}...`);
-                              jsDevTools.deleteFile(packageLockJsonFilePath);
-                            }
-                            const packageJsonFilePath: string = jsDevTools.joinPath(repositoryFolderPath, "package.json");
-                            if (jsDevTools.fileExistsSync(packageJsonFilePath)) {
-                              await logger.logInfo(`Resetting file ${packageJsonFilePath}...`);
-                              gitCheckout("package.json", {
-                                runner: this.runner,
-                                executionFolderPath: repositoryFolderPath,
-                                showCommand: true,
-                                log: logger.logInfo
-                              });
-                            }
-
-                            if (autorestResult.exitCode !== 0) {
-                              await logger.logError(`Failed to run autorest.`);
+                            if (installAutorestResult.exitCode !== 0) {
+                              await repoLogger.logError(`Failed to install ${autorestInstallSource}.`);
                             } else {
-                              const gitStatusResult: jsDevTools.GitStatusResult = await jsDevTools.gitStatus({
+                              const autorestOptions: jsDevTools.AutoRestOptions = swaggerToSDKConfig.meta.autorest_options || {};
+
+                              for (const autorestOptionName of Object.keys(autorestOptions)) {
+                                const autorestOptionValue: jsDevTools.AutoRestOptionValue = autorestOptions[autorestOptionName];
+                                if (autorestOptionName.startsWith("sdkrel:") && typeof autorestOptionValue === "string") {
+                                  const resolvedAutorestOptionName: string = autorestOptionName.substring("sdkrel:".length);
+                                  const resolvedAutorestOptionValue: string = jsDevTools.joinPath(repositoryFolderPath, autorestOptionValue);
+                                  delete autorestOptions[autorestOptionName];
+                                  autorestOptions[resolvedAutorestOptionName] = resolvedAutorestOptionValue;
+                                }
+                              }
+
+                              const autorestResult: jsDevTools.RunResult = await jsDevTools.autorest(mergedReadmeMdFileUrl, autorestOptions, {
+                                autorestPath: "./node_modules/.bin/autorest",
                                 runner: this.runner,
                                 executionFolderPath: repositoryFolderPath,
                                 showCommand: true,
-                                log: logger.logInfo
+                                log: repoLogger.logInfo
                               });
 
-                              if (!gitStatusResult.hasUncommittedChanges) {
-                                await logger.logInfo(`No changes were detected after AutoRest ran.`);
+                              const nodeModulesFolderPath: string = jsDevTools.joinPath(repositoryFolderPath, "node_modules");
+                              if (jsDevTools.folderExistsSync(nodeModulesFolderPath)) {
+                                await repoLogger.logInfo(`Deleting folder ${nodeModulesFolderPath}...`);
+                                jsDevTools.deleteFolder(nodeModulesFolderPath);
+                              }
+                              const packageLockJsonFilePath: string = jsDevTools.joinPath(repositoryFolderPath, "package-lock.json");
+                              if (jsDevTools.fileExistsSync(packageLockJsonFilePath)) {
+                                await repoLogger.logInfo(`Deleting file ${packageLockJsonFilePath}...`);
+                                jsDevTools.deleteFile(packageLockJsonFilePath);
+                              }
+                              const packageJsonFilePath: string = jsDevTools.joinPath(repositoryFolderPath, "package.json");
+                              if (jsDevTools.fileExistsSync(packageJsonFilePath)) {
+                                await repoLogger.logInfo(`Resetting file ${packageJsonFilePath}...`);
+                                gitCheckout("package.json", {
+                                  runner: this.runner,
+                                  executionFolderPath: repositoryFolderPath,
+                                  showCommand: true,
+                                  log: repoLogger.logInfo
+                                });
+                              }
+
+                              if (autorestResult.exitCode !== 0) {
+                                await repoLogger.logError(`Failed to run autorest.`);
                               } else {
-                                logInterestingFiles(gitStatusResult.untrackedFiles, logger, "added");
-                                logInterestingFiles(gitStatusResult.notStagedModifiedFiles, logger, "modified");
-                                logInterestingFiles(gitStatusResult.notStagedDeletedFiles, logger, "deleted");
+                                const gitStatusResult: jsDevTools.GitStatusResult = await jsDevTools.gitStatus({
+                                  runner: this.runner,
+                                  executionFolderPath: repositoryFolderPath,
+                                  showCommand: true,
+                                  log: repoLogger.logInfo
+                                });
+
+                                if (!gitStatusResult.hasUncommittedChanges) {
+                                  await repoLogger.logInfo(`No changes were detected after AutoRest ran.`);
+                                } else {
+                                  await logInterestingFiles(gitStatusResult.untrackedFiles, repoLogger, "added");
+                                  await logInterestingFiles(gitStatusResult.notStagedModifiedFiles, repoLogger, "modified");
+                                  await logInterestingFiles(gitStatusResult.notStagedDeletedFiles, repoLogger, "deleted");
+                                }
                               }
                             }
                           }
-                        }
 
-                        if (!deleteClonedRepositories) {
-                          await logger.logInfo(`Not deleting clone of ${fullRepositoryName} at folder ${repositoryFolderPath}.`);
-                        } else {
-                          await logger.logInfo(`Deleting clone of ${fullRepositoryName} at folder ${repositoryFolderPath}...`);
-                          jsDevTools.deleteFolder(repositoryFolderPath);
-                          await logger.logInfo(`Finished deleting clone of ${fullRepositoryName} at folder ${repositoryFolderPath}.`);
+                          if (!deleteWorkingFolder) {
+                            await repoLogger.logInfo(`Not deleting clone of ${fullRepositoryName} at folder ${repositoryFolderPath}.`);
+                          } else {
+                            await repoLogger.logInfo(`Deleting clone of ${fullRepositoryName} at folder ${repositoryFolderPath}...`);
+                            jsDevTools.deleteFolder(repositoryFolderPath);
+                            await repoLogger.logInfo(`Finished deleting clone of ${fullRepositoryName} at folder ${repositoryFolderPath}.`);
+                          }
                         }
                       }
                     }
                   }
                 }
               }
-
-              if (!deleteClonedRepositories) {
-                await logger.logInfo(`Not deleting working folder ${workingFolderPath}.`);
-              } else {
-                await logger.logInfo(`Deleting working folder ${workingFolderPath}...`);
-                jsDevTools.deleteFolder(workingFolderPath);
-                await logger.logInfo(`Finished deleting working folder ${workingFolderPath}.`);
-              }
             }
           }
         }
+      }
+    } finally {
+      if (!deleteWorkingFolder) {
+        await logger.logInfo(`Not deleting working folder ${workingFolderPath}.`);
+      } else {
+        await logger.logInfo(`Deleting working folder ${workingFolderPath}...`);
+        jsDevTools.deleteFolder(workingFolderPath);
+        await logger.logInfo(`Finished deleting working folder ${workingFolderPath}.`);
       }
     }
   }
