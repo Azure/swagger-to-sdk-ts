@@ -185,18 +185,35 @@ export interface SwaggerToSDKPullRequestChangeOptions {
  */
 const diffGitLineRegex: RegExp = /diff --git a\/(.*) b\/.*/;
 
+async function createTempFolder(baseFolderPath: string): Promise<string> {
+  let count = 1;
+  let workingFolderPath: string = jsDevTools.joinPath(baseFolderPath, count.toString());
+  while (!await jsDevTools.createFolder(workingFolderPath)) {
+    ++count;
+    workingFolderPath = jsDevTools.joinPath(baseFolderPath, count.toString());
+  }
+  return workingFolderPath;
+}
+
 export async function getWorkingFolderPath(baseWorkingFolderPath: string | undefined): Promise<string> {
+  const customBaseWorkingFolderPath: boolean = !!baseWorkingFolderPath;
   if (!baseWorkingFolderPath) {
     baseWorkingFolderPath = process.cwd();
   } else if (!jsDevTools.isRooted(baseWorkingFolderPath)) {
     baseWorkingFolderPath = jsDevTools.joinPath(process.cwd(), baseWorkingFolderPath);
   }
 
-  let workingFolderNumber = 1;
-  let workingFolderPath: string = jsDevTools.joinPath(baseWorkingFolderPath, workingFolderNumber.toString());
-  while (!await jsDevTools.createFolder(workingFolderPath)) {
-    ++workingFolderNumber;
-    workingFolderPath = jsDevTools.joinPath(baseWorkingFolderPath, workingFolderNumber.toString());
+  let workingFolderPath: string;
+  try {
+    workingFolderPath = await createTempFolder(baseWorkingFolderPath);
+  } catch (error) {
+    if (!customBaseWorkingFolderPath) {
+      throw error;
+    } else {
+      // Error when trying to create the working folder path. Fall back to creating a temporary
+      // folder in the current working directory.
+      workingFolderPath = await createTempFolder(process.cwd());
+    }
   }
 
   return workingFolderPath;

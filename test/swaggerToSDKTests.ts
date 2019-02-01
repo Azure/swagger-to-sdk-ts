@@ -106,6 +106,7 @@ describe("SwaggerToSDK", function () {
   describe("pullRequestChange()", function () {
     describe("pull request created", function () {
       it("when diff_url returns 404", async function () {
+        const rootPath: string = normalize(process.cwd());
         const blobStorage = new InMemoryBlobStorage();
         const workingPrefix: BlobStoragePrefix = getWorkingPrefix(blobStorage);
         const logger: InMemoryLogger = getInMemoryLogger();
@@ -125,18 +126,19 @@ describe("SwaggerToSDK", function () {
           pull_request: pullRequest
         };
 
-        await swaggerToSDK.pullRequestChange(webhookBody);
+        await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: rootPath });
 
         assert.deepEqual(logger.allLogs, [
           `Received pull request change webhook request from GitHub for "https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}".`,
           `Getting diff_url (https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}.diff) contents...`,
           `diff_url response status code is 404.`,
-          `Deleting working folder C:/Users/daschult/Sources/swagger-to-sdk-ts/1...`,
-          `Finished deleting working folder C:/Users/daschult/Sources/swagger-to-sdk-ts/1.`
+          `Deleting working folder ${rootPath}/1...`,
+          `Finished deleting working folder ${rootPath}/1.`
         ]);
       });
 
       it("when diff_url returns empty body", async function () {
+        const rootPath: string = normalize(process.cwd());
         const blobStorage = new InMemoryBlobStorage();
         const workingPrefix: BlobStoragePrefix = getWorkingPrefix(blobStorage);
         const logger: InMemoryLogger = getInMemoryLogger();
@@ -157,15 +159,15 @@ describe("SwaggerToSDK", function () {
           pull_request: pullRequest
         };
 
-        await swaggerToSDK.pullRequestChange(webhookBody);
+        await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: rootPath });
 
         assert.deepEqual(logger.allLogs, [
           `Received pull request change webhook request from GitHub for "https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}".`,
           `Getting diff_url (https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}.diff) contents...`,
           `diff_url response status code is 200.`,
           `diff_url response body is empty.`,
-          `Deleting working folder C:/Users/daschult/Sources/swagger-to-sdk-ts/1...`,
-          `Finished deleting working folder C:/Users/daschult/Sources/swagger-to-sdk-ts/1.`
+          `Deleting working folder ${rootPath}/1...`,
+          `Finished deleting working folder ${rootPath}/1.`
         ]);
       });
 
