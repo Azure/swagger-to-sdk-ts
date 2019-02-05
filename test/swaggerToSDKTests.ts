@@ -1,6 +1,6 @@
-import { assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, FakeRunner, getInMemoryLogger, getRootPath, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, NodeHttpClient, normalize, npmExecutable, RealGitHub, RealRunner, Runner, getParentFolderPath, deleteFolder, joinPath } from "@ts-common/azure-js-dev-tools";
+import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, deleteFolder, FakeCompressor, FakeRunner, getInMemoryLogger, getParentFolderPath, getRootPath, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealGitHub, RealRunner, Runner } from "@ts-common/azure-js-dev-tools";
 import { assert } from "chai";
-import { allLogsName, SwaggerToSDK, getWorkingFolderPath } from "../lib/swaggerToSDK";
+import { allLogsName, getWorkingFolderPath, SwaggerToSDK } from "../lib/swaggerToSDK";
 
 const baseCommit: GitHubCommit = {
   label: "Azure:master",
@@ -177,6 +177,12 @@ describe("SwaggerToSDK", function () {
           : new InMemoryBlobStorage();
       }
 
+      function createEndToEndCompressorCreator(real?: boolean): () => Compressor {
+        return real
+          ? () => new ArchiverCompressor()
+          : () => new FakeCompressor();
+      }
+
       function createEndToEndHttpClient(): HttpClient {
         return new NodeHttpClient();
       }
@@ -216,10 +222,11 @@ describe("SwaggerToSDK", function () {
       it("end-to-end", async function () {
         this.timeout(600000);
         const real = false;
-        const blobStorage: BlobStorage = createEndToEndBlobStorage(false);
+        const blobStorage: BlobStorage = createEndToEndBlobStorage(real);
         const workingPrefix: BlobStoragePrefix = getWorkingPrefix(blobStorage);
         try {
           const logger: InMemoryLogger = getInMemoryLogger();
+          const compressorCreator: () => Compressor = createEndToEndCompressorCreator(real);
           const httpClient: HttpClient = createEndToEndHttpClient();
           const workingFolderPath: string = await getWorkingFolderPath(getRootPath(process.cwd())!);
           await deleteFolder(workingFolderPath);
@@ -227,20 +234,27 @@ describe("SwaggerToSDK", function () {
           const npm: string = npmExecutable();
           const autorest: string = autorestExecutable({ autorestPath: "./node_modules/.bin/autorest" });
           const runner: Runner = createEndToEndRunner({ real, npm, autorest, baseWorkingFolderPath });
-          const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger, httpClient, runner });
+          const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger, httpClient, runner, compressorCreator });
           const webhookBody: GitHubPullRequestWebhookBody = {
             action: "opened",
             number: 1,
             pull_request: pullRequest
           };
+          const uploadClonedRepositories: boolean = !real;
 
-          await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: baseWorkingFolderPath });
+          await swaggerToSDK.pullRequestChange(webhookBody, {
+            workingFolderPath: baseWorkingFolderPath,
+            deleteClonedRepositories: true,
+            uploadClonedRepositories
+          });
 
           assert.strictEqual(await workingPrefix.getContainer().exists(), true);
-          const allLogsBlob: BlobStorageBlob = workingPrefix.getBlob(`Azure/azure-rest-api-specs/${pullRequest.number}/1/${allLogsName}`);
-          const javaLogsBlob: BlobStorageBlob = workingPrefix.getBlob(`Azure/azure-rest-api-specs/${pullRequest.number}/1/azure.azure-sdk-for-java.logs.html`);
-          assert.strictEqual(await allLogsBlob.exists(), true);
 
+          const generationInstancePrefix: BlobStoragePrefix = workingPrefix.getPrefix(`Azure/azure-rest-api-specs/${pullRequest.number}/1/`);
+
+          const allLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob(allLogsName);
+          assert.strictEqual(await allLogsBlob.exists(), true);
+          assert.strictEqual(await allLogsBlob.getContentType(), "text/plain");
           const expectedLogs: string[] = [
             `Received pull request change webhook request from GitHub for "https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}".`,
             `diff_url response status code is 200.`,
@@ -298,14 +312,40 @@ describe("SwaggerToSDK", function () {
             `Deleting working folder ${joinPath(baseWorkingFolderPath, "1")}...`,
             `Finished deleting working folder ${joinPath(baseWorkingFolderPath, "1")}.`
           ];
-          assertEx.containsAll(logger.allLogs, expectedLogs);
           assertEx.containsAll(await allLogsBlob.getContentsAsString(), expectedLogs);
+          assertEx.containsAll(logger.allLogs, expectedLogs);
+
+          const javaScriptLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob("azure.azure-sdk-for-js.logs.txt");
+          assert.strictEqual(await javaScriptLogsBlob.exists(), true);
+          assert.strictEqual(await javaScriptLogsBlob.getContentType(), "text/plain");
+
+          const javaLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob(`azure.azure-sdk-for-java.logs.txt`);
+          assert.strictEqual(await javaLogsBlob.exists(), true);
+          assert.strictEqual(await javaLogsBlob.getContentType(), "text/plain");
           assertEx.containsAll(await javaLogsBlob.getContentsAsString(), [
             `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${joinPath(baseWorkingFolderPath, "1/1")}`,
             `${joinPath(baseWorkingFolderPath, "1/1")}: ${npm} install autorest`,
             `${joinPath(baseWorkingFolderPath, "1/1")}: ${autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${joinPath(baseWorkingFolderPath, "1/1")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
             `Deleting clone of Azure/azure-sdk-for-java at folder ${joinPath(baseWorkingFolderPath, "1/1")}...`,
           ]);
+
+          const pythonLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob("azure.azure-sdk-for-python.logs.txt");
+          assert.strictEqual(await pythonLogsBlob.exists(), true);
+          assert.strictEqual(await pythonLogsBlob.getContentType(), "text/plain");
+
+          const nodeLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob("azure.azure-sdk-for-node.logs.txt");
+          assert.strictEqual(await nodeLogsBlob.exists(), true);
+          assert.strictEqual(await nodeLogsBlob.getContentType(), "text/plain");
+
+          const goLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob("azure.azure-sdk-for-go.logs.txt");
+          assert.strictEqual(await goLogsBlob.exists(), true);
+          assert.strictEqual(await goLogsBlob.getContentType(), "text/plain");
+
+          assert.strictEqual(await generationInstancePrefix.blobExists("azure.azure-sdk-for-js.zip"), uploadClonedRepositories);
+          assert.strictEqual(await generationInstancePrefix.blobExists("azure.azure-sdk-for-java.zip"), uploadClonedRepositories);
+          assert.strictEqual(await generationInstancePrefix.blobExists("azure.azure-sdk-for-python.zip"), uploadClonedRepositories);
+          assert.strictEqual(await generationInstancePrefix.blobExists("azure.azure-sdk-for-node.zip"), uploadClonedRepositories);
+          assert.strictEqual(await generationInstancePrefix.blobExists("azure.azure-sdk-for-go.zip"), uploadClonedRepositories);
         } finally {
           await workingPrefix.getContainer().delete();
         }
