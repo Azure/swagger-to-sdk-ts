@@ -1,5 +1,5 @@
 import * as jsDevTools from "@ts-common/azure-js-dev-tools";
-import { BlobStoragePrefix, getCompositeLogger, getGitHubRepository, getRepositoryFullName, gitCheckout, GitHubRepository, HttpResponse, npmInstall } from "@ts-common/azure-js-dev-tools";
+import { BlobStoragePrefix, CompressionResult, getCompositeLogger, getGitHubRepository, getRepositoryFullName, gitCheckout, GitHubRepository, HttpResponse, npmInstall, URLBuilder, deleteFile } from "@ts-common/azure-js-dev-tools";
 
 export interface AdvancedOptions {
   /**
@@ -162,6 +162,11 @@ export interface SwaggerToSDKOptions {
    * The runner object that will be used to execute external-process commands.
    */
   runner?: jsDevTools.Runner;
+  /**
+   * A factory function that will be used to create a Compressor used to compress folders for
+   * uploading.
+   */
+  compressorCreator?: () => jsDevTools.Compressor;
 }
 
 /**
@@ -177,6 +182,11 @@ export interface SwaggerToSDKPullRequestChangeOptions {
    * Whether or not to delete the locally cloned repositories used for generation. Defaults to true.
    */
   deleteClonedRepositories?: boolean;
+  /**
+   * Whether or not to compress and upload the cloned repositories after AutoRest has been run.
+   * Defaults to false.
+   */
+  uploadClonedRepositories?: boolean;
 }
 
 /**
@@ -256,7 +266,9 @@ export class BlobLogger implements jsDevTools.Logger {
   private log(text: string): Promise<void> {
     this.logs.push(text);
 
-    return this.blob.setContentsFromString(`<html><body>${this.logs.join("<br/>")}</body></html>`);
+    return this.blob.setContentsFromString(this.logs.join("\n"), {
+      contentType: "text/plain"
+    });
   }
 
   logInfo(text: string): Promise<void> {
@@ -286,7 +298,7 @@ export class BlobLogger implements jsDevTools.Logger {
  */
 export const pullRequestsContainerName = "pullrequests";
 
-export const allLogsName = "all.logs.html";
+export const allLogsName = "all.logs.txt";
 
 /**
  * The collection of functions that implement the Swagger To SDK service.
@@ -296,6 +308,7 @@ export class SwaggerToSDK {
   public readonly logger: jsDevTools.Logger | undefined;
   public readonly httpClient: jsDevTools.HttpClient;
   public readonly runner: jsDevTools.Runner | undefined;
+  public readonly compressorCreator: () => jsDevTools.Compressor;
 
   constructor(workingPrefix: jsDevTools.BlobStoragePrefix, options?: SwaggerToSDKOptions) {
     options = options || {};
@@ -303,6 +316,7 @@ export class SwaggerToSDK {
     this.logger = options.logger;
     this.httpClient = options.httpClient || new jsDevTools.NodeHttpClient();
     this.runner = options.runner;
+    this.compressorCreator = options.compressorCreator || (() => new jsDevTools.ArchiverCompressor());
   }
 
   private getPullRequestPrefix(repository: jsDevTools.GitHubRepository, pullRequestNumber: number): jsDevTools.BlobStoragePrefix {
@@ -320,13 +334,22 @@ export class SwaggerToSDK {
     return generationInstancePrefix.getBlob(allLogsName);
   }
 
+  private getRepositoryFileName(repository: GitHubRepository, extension: string): string {
+    if (!extension.startsWith(".")) {
+      extension = `.${extension}`;
+    }
+    return `${getRepositoryFullName(repository).toLowerCase().replace("/", ".")}${extension}`;
+  }
+
   private getRepositoryLogsBlob(generationInstancePrefix: BlobStoragePrefix, repository: GitHubRepository): jsDevTools.BlobStorageBlob {
-    return generationInstancePrefix.getBlob(`${getRepositoryFullName(repository).toLowerCase().replace("/", ".")}.logs.html`);
+    return generationInstancePrefix.getBlob(this.getRepositoryFileName(repository, ".logs.txt"));
   }
 
   private async createGenerationInstance(repository: jsDevTools.GitHubRepository, pullRequestNumber: number): Promise<number> {
     // Create the working prefix's container if it doesn't already exist.
-    await this.workingPrefix.getContainer().create();
+    await this.workingPrefix.getContainer().create({
+      accessPolicy: "blob"
+    });
 
     let generationInstance = 1;
     let generationInstancePrefix: BlobStoragePrefix = this.getGenerationInstancePrefix(repository, pullRequestNumber, generationInstance);
@@ -540,6 +563,35 @@ export class SwaggerToSDK {
                                   await logInterestingFiles(gitStatusResult.untrackedFiles, repoLogger, "added");
                                   await logInterestingFiles(gitStatusResult.notStagedModifiedFiles, repoLogger, "modified");
                                   await logInterestingFiles(gitStatusResult.notStagedDeletedFiles, repoLogger, "deleted");
+                                }
+
+                                if (options.uploadClonedRepositories) {
+                                  const repositoryZipFileName: string = this.getRepositoryFileName(repository, ".zip");
+                                  const repositoryZipFilePath: string = jsDevTools.joinPath(workingFolderPath, repositoryZipFileName);
+                                  await repoLogger.logInfo(`Compressing ${repositoryFolderPath} to ${repositoryZipFilePath}...`);
+                                  const compressor: jsDevTools.Compressor = this.compressorCreator();
+                                  const repoFolderCompressionResult: CompressionResult = await compressor.zip(repositoryFolderPath, repositoryZipFilePath);
+                                  if (repoFolderCompressionResult.warnings && repoFolderCompressionResult.warnings.length > 0) {
+                                    for (const warning of repoFolderCompressionResult.warnings) {
+                                      await repoLogger.logWarning(JSON.stringify(warning));
+                                    }
+                                  }
+                                  if (repoFolderCompressionResult.errors && repoFolderCompressionResult.errors.length > 0) {
+                                    for (const error of repoFolderCompressionResult.errors) {
+                                      await repoLogger.logError(JSON.stringify(error));
+                                    }
+                                  }
+
+                                  const repositoryZipBlob: jsDevTools.BlobStorageBlob = generationInstancePrefix.getBlob(repositoryZipFileName);
+                                  const repositoryZipBlobURLBuilder: URLBuilder = URLBuilder.parse(repositoryZipBlob.getURL());
+                                  // Get rid of the SAS in the URL.
+                                  repositoryZipBlobURLBuilder.setQuery(undefined);
+                                  repoLogger.logInfo(`Uploading compressed repository to ${repositoryZipBlobURLBuilder.toString()}...`);
+                                  try {
+                                    await repositoryZipBlob.setContentsFromFile(repositoryZipFilePath);
+                                  } finally {
+                                    deleteFile(repositoryZipFilePath);
+                                  }
                                 }
                               }
                             }
