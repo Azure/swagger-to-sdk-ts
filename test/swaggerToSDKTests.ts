@@ -1,4 +1,5 @@
-import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, deleteFolder, FakeCompressor, FakeRunner, getInMemoryLogger, getParentFolderPath, getRootPath, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealGitHub, RealRunner, Runner } from "@ts-common/azure-js-dev-tools";
+import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, createFolder, deleteFolder, FakeCompressor, FakeRunner, getInMemoryLogger, getParentFolderPath, getRootPath, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealGitHub, RealRunner, Runner, writeFileContents } from "@ts-common/azure-js-dev-tools";
+import { getLines } from "@ts-common/azure-js-dev-tools/dist/lib/common";
 import { assert } from "chai";
 import { allLogsName, getWorkingFolderPath, SwaggerToSDK } from "../lib/swaggerToSDK";
 
@@ -195,25 +196,156 @@ describe("SwaggerToSDK", function () {
       }
 
       function createEndToEndRunner(options: CreateEndToEndRunnerOptions): Runner {
+        const rootPath: string = options.baseWorkingFolderPath;
+        const pythonFolderPath: string = joinPath(rootPath, "1/1");
+        const javaFolderPath: string = joinPath(rootPath, "1/2");
+        const goFolderPath: string = joinPath(rootPath, "1/src/github.com/Azure/azure-sdk-for-go");
+        const nodeFolderPath: string = joinPath(rootPath, "1/azure-sdk-for-node");
+        const jsFolderPath: string = joinPath(rootPath, "1/azure-sdk-for-js");
+        const rubyFolderPath: string = joinPath(rootPath, "1/6");
         let runner: Runner;
         if (options.real) {
           runner = new RealRunner();
         } else {
           const fakeRunner = new FakeRunner();
-          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python ${joinPath(options.baseWorkingFolderPath, "1/1")}`, { exitCode: 0 });
-          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${joinPath(options.baseWorkingFolderPath, "1/1")}`, { exitCode: 0 });
-          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-go ${joinPath(options.baseWorkingFolderPath, "1/src/github.com/Azure/azure-sdk-for-go")}`, { exitCode: 0 });
-          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-node ${joinPath(options.baseWorkingFolderPath, "1/azure-sdk-for-node")}`, { exitCode: 0 });
-          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-js ${joinPath(options.baseWorkingFolderPath, "1/azure-sdk-for-js")}`, { exitCode: 0 });
-          fakeRunner.set(`git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-ruby ${joinPath(options.baseWorkingFolderPath, "1/1")}`, { exitCode: 0 });
-          fakeRunner.set(`${options.npm} install autorest`, { exitCode: 0 });
-          fakeRunner.set(`${options.autorest} --version=preview --use=@microsoft.azure/autorest.python@~3.0.56 --python --python-mode=update --multiapi --python-sdks-folder=${joinPath(options.baseWorkingFolderPath, "1/1")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
-          fakeRunner.set(`${options.autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${joinPath(options.baseWorkingFolderPath, "1/1")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
-          fakeRunner.set(`${options.autorest} --use=@microsoft.azure/autorest.go@~2.1.127 --go --verbose --multiapi --use-onever --preview-chk --go-sdk-folder=${joinPath(options.baseWorkingFolderPath, "1/src/github.com/Azure/azure-sdk-for-go")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
-          fakeRunner.set(`${options.autorest} --nodejs --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.nodejs@2.2.131 --node-sdks-folder=${joinPath(options.baseWorkingFolderPath, "1/azure-sdk-for-node")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
-          fakeRunner.set(`${options.autorest} --typescript --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.typescript@2.1.1 --typescript-sdks-folder=${joinPath(options.baseWorkingFolderPath, "1/azure-sdk-for-js")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
-          fakeRunner.set(`${options.autorest} --version=preview --use=@microsoft.azure/autorest.ruby@3.0.20 --ruby --multiapi --ruby-sdks-folder=${joinPath(options.baseWorkingFolderPath, "1/1")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`, { exitCode: 0 });
-          fakeRunner.set(`git status`, { exitCode: 0 });
+          fakeRunner.set({
+            command: `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python ${pythonFolderPath}`,
+            result: async () => {
+              const packageFolderPath: string = joinPath(pythonFolderPath, "azure-mgmt-rdbms");
+              await createFolder(packageFolderPath);
+              await writeFileContents(joinPath(packageFolderPath, "setup.py"), "");
+              return { exitCode: 0 };
+            }
+          });
+          fakeRunner.set({
+            command: `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${javaFolderPath}`,
+            result: async () => {
+              const packageFolderPath: string = joinPath(javaFolderPath, "mysql/resource-manager/v2017_12_01");
+              await createFolder(packageFolderPath);
+              await writeFileContents(joinPath(packageFolderPath, "pom.xml"), "");
+              return { exitCode: 0 };
+            }
+          });
+          fakeRunner.set({
+            command: `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-go ${goFolderPath}`,
+            result: async () => {
+              const packageFolderPath: string = joinPath(goFolderPath, "services/mysql/mgmt/2017-12-01/mysql");
+              await createFolder(packageFolderPath);
+              await writeFileContents(joinPath(packageFolderPath, "client.go"), "");
+              return { exitCode: 0 };
+            }
+          });
+          fakeRunner.set({
+            command: `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-node ${nodeFolderPath}`,
+            result: async () => {
+              const packageFolderPath: string = joinPath(nodeFolderPath, "lib/services/mysqlManagement");
+              await createFolder(packageFolderPath);
+              await writeFileContents(joinPath(packageFolderPath, "package.json"), "{}");
+              return { exitCode: 0 };
+            }
+          });
+          fakeRunner.set({
+            command: `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-js ${jsFolderPath}`,
+            result: async () => {
+              const packageFolderPath: string = joinPath(jsFolderPath, "packages/@azure/arm-mysql");
+              await createFolder(packageFolderPath);
+              await writeFileContents(joinPath(packageFolderPath, "package.json"), "{}");
+              return { exitCode: 0 };
+            }
+          });
+          fakeRunner.set({ command: `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-ruby ${rubyFolderPath}` });
+          fakeRunner.set({ command: `${options.npm} install autorest` });
+          fakeRunner.set({ command: `${options.autorest} --version=preview --use=@microsoft.azure/autorest.python@~3.0.56 --python --python-mode=update --multiapi --python-sdks-folder=${pythonFolderPath} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md` });
+          fakeRunner.set({ command: `${options.autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${javaFolderPath} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md` });
+          fakeRunner.set({ command: `${options.autorest} --use=@microsoft.azure/autorest.go@~2.1.127 --go --verbose --multiapi --use-onever --preview-chk --go-sdk-folder=${goFolderPath} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md` });
+          fakeRunner.set({ command: `${options.autorest} --nodejs --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.nodejs@2.2.131 --node-sdks-folder=${nodeFolderPath} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md` });
+          fakeRunner.set({ command: `${options.autorest} --typescript --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.typescript@2.1.1 --typescript-sdks-folder=${jsFolderPath} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md` });
+          fakeRunner.set({ command: `${options.autorest} --version=preview --use=@microsoft.azure/autorest.ruby@3.0.20 --ruby --multiapi --ruby-sdks-folder=${rubyFolderPath} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md` });
+          fakeRunner.set({ command: `git checkout package.json` });
+          fakeRunner.set({
+            command: `git status`,
+            executionFolderPath: goFolderPath,
+            result: {
+              exitCode: 0,
+              stdout:
+                `On branch master
+Your branch is up to date with 'origin/master'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git checkout -- <file>..." to discard changes in working directory)
+
+  modified:   services/mysql/mgmt/2017-12-01/mysql/locationbasedperformancetier.go`
+            }
+          });
+          fakeRunner.set({
+            command: `git status`,
+            executionFolderPath: nodeFolderPath,
+            result: {
+              exitCode: 0,
+              stdout:
+                `On branch master
+Your branch is up to date with 'origin/master'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git checkout -- <file>..." to discard changes in working directory)
+
+  modified:   lib/services/mysqlManagement/lib/models/firewallRuleListResult.js`
+            }
+          });
+          fakeRunner.set({
+            command: `git status`,
+            executionFolderPath: pythonFolderPath,
+            result: {
+              exitCode: 0,
+              stdout:
+                `On branch master
+Your branch is up to date with 'origin/master'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git checkout -- <file>..." to discard changes in working directory)
+
+  modified:   azure-mgmt-rdbms/azure/mgmt/rdbms/mysql/models/configuration.py`
+            }
+          });
+          fakeRunner.set({
+            command: `git status`,
+            executionFolderPath: jsFolderPath,
+            result: {
+              exitCode: 0,
+              stdout:
+                `On branch master
+Your branch is up to date with 'origin/master'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git checkout -- <file>..." to discard changes in working directory)
+
+  modified:   packages/@azure/arm-mysql/LICENSE.txt
+  modified:   packages/@azure/arm-mysql/README.md
+  modified:   packages/@azure/arm-mysql/lib/models/checkNameAvailabilityMappers.ts
+  modified:   packages/@azure/arm-mysql/lib/models/configurationsMappers.ts`
+            }
+          });
+          fakeRunner.set({
+            command: `git status`,
+            executionFolderPath: javaFolderPath,
+            result: {
+              exitCode: 0,
+              stdout:
+                `On branch master
+Your branch is up to date with 'origin/master'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git checkout -- <file>..." to discard changes in working directory)
+
+  modified:   mysql/resource-manager/v2017_12_01/src/main/java/com/microsoft/azure/management/mysql/v2017_12_01/CheckNameAvailabilitys.java
+  modified:   mysql/resource-manager/v2017_12_01/src/main/java/com/microsoft/azure/management/mysql/v2017_12_01/Configuration.java`
+            }
+          });
           runner = fakeRunner;
         }
         return runner;
@@ -231,6 +363,11 @@ describe("SwaggerToSDK", function () {
           const workingFolderPath: string = await getWorkingFolderPath(getRootPath(process.cwd())!);
           await deleteFolder(workingFolderPath);
           const baseWorkingFolderPath: string = getParentFolderPath(workingFolderPath);
+          const pythonFolderPath: string = joinPath(baseWorkingFolderPath, "1/1");
+          const javaFolderPath: string = joinPath(baseWorkingFolderPath, "1/2");
+          const goFolderPath: string = joinPath(baseWorkingFolderPath, "1/src/github.com/Azure/azure-sdk-for-go");
+          const nodeFolderPath: string = joinPath(baseWorkingFolderPath, "1/azure-sdk-for-node");
+          const jsFolderPath: string = joinPath(baseWorkingFolderPath, "1/azure-sdk-for-js");
           const npm: string = npmExecutable();
           const autorest: string = autorestExecutable({ autorestPath: "./node_modules/.bin/autorest" });
           const runner: Runner = createEndToEndRunner({ real, npm, autorest, baseWorkingFolderPath });
@@ -283,63 +420,95 @@ describe("SwaggerToSDK", function () {
             `azure-sdk-for-go`,
             `azure-sdk-for-js`,
             `azure-sdk-for-node`,
-            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python ${joinPath(baseWorkingFolderPath, "1/1")}`,
-            `${joinPath(baseWorkingFolderPath, "1/1")}: ${npm} install autorest`,
-            `${joinPath(baseWorkingFolderPath, "1/1")}: ${autorest} --version=preview --use=@microsoft.azure/autorest.python@~3.0.56 --python --python-mode=update --multiapi --python-sdks-folder=${joinPath(baseWorkingFolderPath, "1/1")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
-            `${joinPath(baseWorkingFolderPath, "1/1")}: git status`,
-            `Deleting clone of Azure/azure-sdk-for-python at folder ${joinPath(baseWorkingFolderPath, "1/1")}...`,
-            `Finished deleting clone of Azure/azure-sdk-for-python at folder ${joinPath(baseWorkingFolderPath, "1/1")}.`,
-            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${joinPath(baseWorkingFolderPath, "1/1")}`,
-            `${joinPath(baseWorkingFolderPath, "1/1")}: ${npm} install autorest`,
-            `${joinPath(baseWorkingFolderPath, "1/1")}: ${autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${joinPath(baseWorkingFolderPath, "1/1")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
-            `Deleting clone of Azure/azure-sdk-for-java at folder ${joinPath(baseWorkingFolderPath, "1/1")}...`,
-            `Finished deleting clone of Azure/azure-sdk-for-java at folder ${joinPath(baseWorkingFolderPath, "1/1")}.`,
-            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-go ${joinPath(baseWorkingFolderPath, "1/src/github.com/Azure/azure-sdk-for-go")}`,
-            `${joinPath(baseWorkingFolderPath, "1/src/github.com/Azure/azure-sdk-for-go")}: ${npm} install autorest`,
-            `${joinPath(baseWorkingFolderPath, "1/src/github.com/Azure/azure-sdk-for-go")}: ${autorest} --use=@microsoft.azure/autorest.go@~2.1.127 --go --verbose --multiapi --use-onever --preview-chk --go-sdk-folder=${joinPath(baseWorkingFolderPath, "1/src/github.com/Azure/azure-sdk-for-go")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
-            `Deleting clone of Azure/azure-sdk-for-go at folder ${joinPath(baseWorkingFolderPath, "1/src/github.com/Azure/azure-sdk-for-go")}...`,
-            `Finished deleting clone of Azure/azure-sdk-for-go at folder ${joinPath(baseWorkingFolderPath, "1/src/github.com/Azure/azure-sdk-for-go")}.`,
-            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-js ${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-js")}`,
-            `${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-js")}: ${npm} install autorest`,
-            `${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-js")}: ${autorest} --typescript --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.typescript@2.1.1 --typescript-sdks-folder=${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-js")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
-            `Deleting clone of Azure/azure-sdk-for-js at folder ${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-js")}...`,
-            `Finished deleting clone of Azure/azure-sdk-for-js at folder ${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-js")}.`,
-            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-node ${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-node")}`,
-            `${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-node")}: ${npm} install autorest`,
-            `${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-node")}: ${autorest} --nodejs --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.nodejs@2.2.131 --node-sdks-folder=${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-node")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
-            `Deleting clone of Azure/azure-sdk-for-node at folder ${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-node")}...`,
-            `Finished deleting clone of Azure/azure-sdk-for-node at folder ${joinPath(baseWorkingFolderPath, "1/azure-sdk-for-node")}.`,
+            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python ${pythonFolderPath}`,
+            `${pythonFolderPath}: ${npm} install autorest`,
+            `${pythonFolderPath}: ${autorest} --version=preview --use=@microsoft.azure/autorest.python@~3.0.56 --python --python-mode=update --multiapi --python-sdks-folder=${joinPath(baseWorkingFolderPath, "1/1")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+            `${pythonFolderPath}: git status`,
+            `Deleting clone of Azure/azure-sdk-for-python at folder ${pythonFolderPath}...`,
+            `Finished deleting clone of Azure/azure-sdk-for-python at folder ${pythonFolderPath}.`,
+            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${javaFolderPath}`,
+            `${javaFolderPath}: ${npm} install autorest`,
+            `${javaFolderPath}: ${autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${javaFolderPath} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+            `Deleting clone of Azure/azure-sdk-for-java at folder ${javaFolderPath}...`,
+            `Finished deleting clone of Azure/azure-sdk-for-java at folder ${javaFolderPath}.`,
+            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-go ${goFolderPath}`,
+            `${goFolderPath}: ${npm} install autorest`,
+            `${goFolderPath}: ${autorest} --use=@microsoft.azure/autorest.go@~2.1.127 --go --verbose --multiapi --use-onever --preview-chk --go-sdk-folder=${goFolderPath} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+            `Deleting clone of Azure/azure-sdk-for-go at folder ${goFolderPath}...`,
+            `Finished deleting clone of Azure/azure-sdk-for-go at folder ${goFolderPath}.`,
+            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-js ${jsFolderPath}`,
+            `${jsFolderPath}: ${npm} install autorest`,
+            `${jsFolderPath}: ${autorest} --typescript --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.typescript@2.1.1 --typescript-sdks-folder=${jsFolderPath} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+            `Deleting clone of Azure/azure-sdk-for-js at folder ${jsFolderPath}...`,
+            `Finished deleting clone of Azure/azure-sdk-for-js at folder ${jsFolderPath}.`,
+            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-node ${nodeFolderPath}`,
+            `${nodeFolderPath}: ${npm} install autorest`,
+            `${nodeFolderPath}: ${autorest} --nodejs --license-header=MICROSOFT_MIT_NO_VERSION --use=@microsoft.azure/autorest.nodejs@2.2.131 --node-sdks-folder=${nodeFolderPath} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+            `Deleting clone of Azure/azure-sdk-for-node at folder ${nodeFolderPath}...`,
+            `Finished deleting clone of Azure/azure-sdk-for-node at folder ${nodeFolderPath}.`,
             `Deleting working folder ${joinPath(baseWorkingFolderPath, "1")}...`,
             `Finished deleting working folder ${joinPath(baseWorkingFolderPath, "1")}.`
           ];
-          assertEx.containsAll(await allLogsBlob.getContentsAsString(), expectedLogs);
+          assertEx.containsAll(getLines(await allLogsBlob.getContentsAsString()), expectedLogs);
           assertEx.containsAll(logger.allLogs, expectedLogs);
 
           const javaScriptLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob("azure.azure-sdk-for-js.logs.txt");
           assert.strictEqual(await javaScriptLogsBlob.exists(), true);
           assert.strictEqual(await javaScriptLogsBlob.getContentType(), "text/plain");
+          const javaScriptLogs: string[] = getLines(await javaScriptLogsBlob.getContentsAsString());
+          assertEx.containsAll(javaScriptLogs, [
+            `The following files were modified:`,
+            `  ${joinPath(jsFolderPath, "packages/@azure/arm-mysql/LICENSE.txt")}`,
+            `  ${joinPath(jsFolderPath, "packages/@azure/arm-mysql/README.md")}`,
+            `  ${joinPath(jsFolderPath, "packages/@azure/arm-mysql/lib/models/checkNameAvailabilityMappers.ts")}`,
+            `  ${joinPath(jsFolderPath, "packages/@azure/arm-mysql/lib/models/configurationsMappers.ts")}`,
+            `Repository Azure/azure-sdk-for-js matches programming language JavaScript.`,
+            `Found 1 package folder that changed:`,
+            `  ${joinPath(jsFolderPath, "packages/@azure/arm-mysql")}`
+          ]);
 
           const javaLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob(`azure.azure-sdk-for-java.logs.txt`);
           assert.strictEqual(await javaLogsBlob.exists(), true);
           assert.strictEqual(await javaLogsBlob.getContentType(), "text/plain");
-          assertEx.containsAll(await javaLogsBlob.getContentsAsString(), [
-            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${joinPath(baseWorkingFolderPath, "1/1")}`,
-            `${joinPath(baseWorkingFolderPath, "1/1")}: ${npm} install autorest`,
-            `${joinPath(baseWorkingFolderPath, "1/1")}: ${autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${joinPath(baseWorkingFolderPath, "1/1")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
-            `Deleting clone of Azure/azure-sdk-for-java at folder ${joinPath(baseWorkingFolderPath, "1/1")}...`,
+          assertEx.containsAll(getLines(await javaLogsBlob.getContentsAsString()), [
+            `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-java ${javaFolderPath}`,
+            `${javaFolderPath}: ${npm} install autorest`,
+            `${javaFolderPath}: ${autorest} --java --verbose --multiapi --use=@microsoft.azure/autorest.java@2.1.85 --azure-libraries-for-java-folder=${javaFolderPath} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
+            `Deleting clone of Azure/azure-sdk-for-java at folder ${javaFolderPath}...`,
+            `Repository Azure/azure-sdk-for-java matches programming language Java.`,
+            `Found 1 package folder that changed:`,
+            `  ${joinPath(javaFolderPath, "mysql/resource-manager/v2017_12_01")}`
           ]);
 
           const pythonLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob("azure.azure-sdk-for-python.logs.txt");
           assert.strictEqual(await pythonLogsBlob.exists(), true);
           assert.strictEqual(await pythonLogsBlob.getContentType(), "text/plain");
+          assertEx.containsAll(getLines(await pythonLogsBlob.getContentsAsString()), [
+            `Repository Azure/azure-sdk-for-python matches programming language Python.`,
+            `Found 1 package folder that changed:`,
+            `  ${joinPath(pythonFolderPath, "azure-mgmt-rdbms")}`,
+            `Deleting clone of Azure/azure-sdk-for-python at folder ${pythonFolderPath}...`,
+            `Finished deleting clone of Azure/azure-sdk-for-python at folder ${pythonFolderPath}.`
+          ]);
 
           const nodeLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob("azure.azure-sdk-for-node.logs.txt");
           assert.strictEqual(await nodeLogsBlob.exists(), true);
           assert.strictEqual(await nodeLogsBlob.getContentType(), "text/plain");
+          const nodeLogs: string[] = getLines(await nodeLogsBlob.getContentsAsString());
+          assertEx.containsAll(nodeLogs, [
+            `Repository Azure/azure-sdk-for-node matches programming language JavaScript.`,
+            `Found 1 package folder that changed:`,
+            `  ${joinPath(nodeFolderPath, "lib/services/mysqlManagement")}`
+          ]);
 
           const goLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob("azure.azure-sdk-for-go.logs.txt");
           assert.strictEqual(await goLogsBlob.exists(), true);
           assert.strictEqual(await goLogsBlob.getContentType(), "text/plain");
+          assertEx.containsAll(getLines(await goLogsBlob.getContentsAsString()), [
+            `Repository Azure/azure-sdk-for-go matches programming language Go.`,
+            `Found 1 package folder that changed:`,
+            `  ${joinPath(goFolderPath, "services/mysql/mgmt/2017-12-01/mysql")}`,
+          ]);
 
           assert.strictEqual(await generationInstancePrefix.blobExists("azure.azure-sdk-for-js.zip"), uploadClonedRepositories);
           assert.strictEqual(await generationInstancePrefix.blobExists("azure.azure-sdk-for-java.zip"), uploadClonedRepositories);

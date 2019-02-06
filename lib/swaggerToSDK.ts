@@ -1,5 +1,57 @@
 import * as jsDevTools from "@ts-common/azure-js-dev-tools";
 import { BlobStoragePrefix, CompressionResult, getCompositeLogger, getGitHubRepository, getRepositoryFullName, gitCheckout, GitHubRepository, HttpResponse, npmInstall, URLBuilder, deleteFile } from "@ts-common/azure-js-dev-tools";
+import { getLines } from "@ts-common/azure-js-dev-tools/dist/lib/common";
+
+/**
+ * A configuration for how to interact with repositories in a specific programming language.
+ */
+export interface LanguageConfiguration {
+  /**
+   * The name of the programming language.
+   */
+  name: string;
+  /**
+   * Aliases that the programming language may also be known by.
+   */
+  aliases?: string[];
+  /**
+   * The name of a file that is found at the root of a generated package for this language.
+   */
+  packageRootFileName?: string;
+}
+
+/**
+ * A language configuration for JavaScript-based languages.
+ */
+export const javascript: LanguageConfiguration = {
+  name: "JavaScript",
+  aliases: ["TypeScript", "TS", "JS", "Node", "Nodejs", "Node.js"],
+  packageRootFileName: "package.json"
+};
+
+export const python: LanguageConfiguration = {
+  name: "Python",
+  packageRootFileName: "setup.py"
+};
+
+export const csharp: LanguageConfiguration = {
+  name: "C#",
+  aliases: ["CSharp", "C-Sharp", "CS"]
+};
+
+export const ruby: LanguageConfiguration = {
+  name: "Ruby"
+};
+
+export const go: LanguageConfiguration = {
+  name: "Go",
+  packageRootFileName: "client.go"
+};
+
+export const java: LanguageConfiguration = {
+  name: "Java",
+  packageRootFileName: "pom.xml"
+};
 
 export interface AdvancedOptions {
   /**
@@ -167,6 +219,10 @@ export interface SwaggerToSDKOptions {
    * uploading.
    */
   compressorCreator?: () => jsDevTools.Compressor;
+  /**
+   * The languages that have been configured.
+   */
+  languages?: LanguageConfiguration[] | ((defaultLanguages: LanguageConfiguration[]) => LanguageConfiguration[]);
 }
 
 /**
@@ -187,6 +243,10 @@ export interface SwaggerToSDKPullRequestChangeOptions {
    * Defaults to false.
    */
   uploadClonedRepositories?: boolean;
+  /**
+   * Whether or not to log verbose logs.
+   */
+  logVerbose?: boolean;
 }
 
 /**
@@ -229,17 +289,13 @@ export async function getWorkingFolderPath(baseWorkingFolderPath: string | undef
   return workingFolderPath;
 }
 
-export function getRepositoryFolderPath(generationInstanceFolderPath: string, swaggerToSDKConfig: SwaggerToSDKConfiguration): string {
+export function getRepositoryFolderPath(generationInstanceFolderPath: string, swaggerToSDKConfig: SwaggerToSDKConfiguration, repositoryNumber: number): string {
   let repositoryFolderPath = `${generationInstanceFolderPath}`;
   if (swaggerToSDKConfig.meta &&
     swaggerToSDKConfig.meta.advanced_options &&
     swaggerToSDKConfig.meta.advanced_options.clone_dir) {
     repositoryFolderPath = jsDevTools.joinPath(repositoryFolderPath, swaggerToSDKConfig.meta.advanced_options.clone_dir);
   } else {
-    let repositoryNumber = 1;
-    while (jsDevTools.folderExistsSync(jsDevTools.joinPath(repositoryFolderPath, repositoryNumber.toString()))) {
-      ++repositoryNumber;
-    }
     repositoryFolderPath = jsDevTools.joinPath(repositoryFolderPath, repositoryNumber.toString());
   }
   return repositoryFolderPath;
@@ -254,42 +310,21 @@ async function logInterestingFiles(files: string[] | undefined, logger: jsDevToo
   }
 }
 
-export class BlobLogger implements jsDevTools.Logger {
-  private readonly logs: string[];
-  private readonly blob: jsDevTools.BlobStorageBlob;
-
-  constructor(blob: jsDevTools.BlobStorageBlob) {
-    this.logs = [];
-    this.blob = blob;
-  }
-
-  private log(text: string): Promise<void> {
-    this.logs.push(text);
-
-    return this.blob.setContentsFromString(this.logs.join("\n"), {
+export function getBlobLogger(blob: jsDevTools.BlobStorageBlob): jsDevTools.Logger {
+  const logs: string[] = [];
+  function log(text: string): Promise<void> {
+    logs.push(text);
+    return blob.setContentsFromString(logs.join("\n"), {
       contentType: "text/plain"
     });
   }
-
-  logInfo(text: string): Promise<void> {
-    return this.log(text);
-  }
-
-  logError(text: string): Promise<void> {
-    return this.log(`ERROR: ${text}`);
-  }
-
-  logWarning(text: string): Promise<void> {
-    return this.log(`WARNING: ${text}`);
-  }
-
-  logSection(text: string): Promise<void> {
-    return this.log(`SECTION: ${text}`);
-  }
-
-  logVerbose(text: string): Promise<void> {
-    return this.log(text);
-  }
+  return {
+    logInfo: log,
+    logError: log,
+    logWarning: log,
+    logSection: log,
+    logVerbose: log,
+  };
 }
 
 /**
@@ -309,6 +344,7 @@ export class SwaggerToSDK {
   public readonly httpClient: jsDevTools.HttpClient;
   public readonly runner: jsDevTools.Runner | undefined;
   public readonly compressorCreator: () => jsDevTools.Compressor;
+  public readonly languages: LanguageConfiguration[];
 
   constructor(workingPrefix: jsDevTools.BlobStoragePrefix, options?: SwaggerToSDKOptions) {
     options = options || {};
@@ -317,6 +353,24 @@ export class SwaggerToSDK {
     this.httpClient = options.httpClient || new jsDevTools.NodeHttpClient();
     this.runner = options.runner;
     this.compressorCreator = options.compressorCreator || (() => new jsDevTools.ArchiverCompressor());
+
+    if (Array.isArray(options.languages)) {
+      this.languages = options.languages;
+    } else {
+      const defaultLanguages: LanguageConfiguration[] = [
+        csharp,
+        go,
+        java,
+        javascript,
+        python,
+        ruby
+      ];
+      if (options.languages) {
+        this.languages = options.languages(defaultLanguages);
+      } else {
+        this.languages = defaultLanguages;
+      }
+    }
   }
 
   private getPullRequestPrefix(repository: jsDevTools.GitHubRepository, pullRequestNumber: number): jsDevTools.BlobStoragePrefix {
@@ -362,6 +416,26 @@ export class SwaggerToSDK {
   }
 
   /**
+   * Get the registered LanguageConfiguration for the provided GitHub repository.
+   * @param repository The repository to get a LanguageConfiguration for.
+   */
+  private getLanguageForRepository(repository: GitHubRepository): LanguageConfiguration | undefined {
+    const lowerCasedRepositoryFullName: string = jsDevTools.getRepositoryFullName(repository).toLowerCase();
+    return jsDevTools.first(this.languages, (language: LanguageConfiguration) => {
+      let matches: boolean = (lowerCasedRepositoryFullName.indexOf(language.name.toLowerCase()) !== -1);
+      if (!matches && language.aliases) {
+        for (const alias of language.aliases) {
+          matches = lowerCasedRepositoryFullName.indexOf(alias.toLowerCase()) !== -1;
+          if (matches) {
+            break;
+          }
+        }
+      }
+      return matches;
+    });
+  }
+
+  /**
    * The implementation-independent function that gets called when GitHub invokes a pull request webhook request to our tooling service.
    * @param pullRequestChangeBody The body of the GitHub pull request webhook request.
    */
@@ -378,14 +452,14 @@ export class SwaggerToSDK {
 
     const workingFolderPath: string = await getWorkingFolderPath(options.workingFolderPath);
     const generationInstancePrefix: BlobStoragePrefix = this.getGenerationInstancePrefix(repository, pullRequestNumber, generationInstance);
-    let logger: jsDevTools.Logger = new BlobLogger(this.getAllLogsBlob(generationInstancePrefix));
+    let logger: jsDevTools.Logger = jsDevTools.wrapLogger(getBlobLogger(this.getAllLogsBlob(generationInstancePrefix)), { logVerbose: !!options.logVerbose });
     if (this.logger) {
       logger = jsDevTools.getCompositeLogger(logger, this.logger);
     }
     try {
-      await logger.logInfo(`Received pull request change webhook request from GitHub for "${apiPullRequest.html_url}".`);
+      await logger.logSection(`Received pull request change webhook request from GitHub for "${apiPullRequest.html_url}".`);
 
-      await logger.logInfo(`Getting diff_url (${apiPullRequest.diff_url}) contents...`);
+      await logger.logSection(`Getting diff_url (${apiPullRequest.diff_url}) contents...`);
       const diffUrlResponse: jsDevTools.HttpResponse = await this.httpClient.sendRequest({ method: "GET", url: apiPullRequest.diff_url });
       const statusCodeMessage = `diff_url response status code is ${diffUrlResponse.statusCode}.`;
       if (diffUrlResponse.statusCode !== 200) {
@@ -431,9 +505,9 @@ export class SwaggerToSDK {
             await logger.logInfo(readmeMdRelativeFilePathToGenerate);
           }
           for (const readmeMdRelativeFilePathToGenerate of readmeMdRelativeFilePathsToGenerate) {
-            await logger.logInfo(`Looking for languages to generate in "${readmeMdRelativeFilePathToGenerate}"...`);
+            await logger.logSection(`Looking for languages to generate in "${readmeMdRelativeFilePathToGenerate}"...`);
             const mergedReadmeMdFileUrl = `https://raw.githubusercontent.com/azure/azure-rest-api-specs/${apiPullRequest.merge_commit_sha}/${readmeMdRelativeFilePathToGenerate}`;
-            await logger.logInfo(`Getting file contents for "${mergedReadmeMdFileUrl}"...`);
+            await logger.logSection(`Getting file contents for "${mergedReadmeMdFileUrl}"...`);
             const mergedReadmeMdFileResponse: HttpResponse = await this.httpClient.sendRequest({ method: "GET", url: mergedReadmeMdFileUrl });
             await logger.logInfo(`Merged readme.md response status code is ${mergedReadmeMdFileResponse.statusCode}.`);
             const mergedReadmeMdFileContents: string | undefined = mergedReadmeMdFileResponse.body;
@@ -448,12 +522,14 @@ export class SwaggerToSDK {
                 for (const requestedRepository of swaggerToSDKConfiguration.repositories) {
                   await logger.logInfo(requestedRepository.repo);
                 }
+                let repositoryIndex = 0;
                 for (const requestedRepository of swaggerToSDKConfiguration.repositories) {
+                  const repositoryNumber: number = ++repositoryIndex;
                   const repository: GitHubRepository = getGitHubRepository(requestedRepository.repo);
                   if (!repository.organization) {
                     repository.organization = "Azure";
                   }
-                  const repoLogger: jsDevTools.Logger = getCompositeLogger(logger, new BlobLogger(this.getRepositoryLogsBlob(generationInstancePrefix, repository)));
+                  const repoLogger: jsDevTools.Logger = getCompositeLogger(logger, jsDevTools.wrapLogger(getBlobLogger(this.getRepositoryLogsBlob(generationInstancePrefix, repository)), { logVerbose: !!options.logVerbose }));
                   const fullRepositoryName: string = getRepositoryFullName(repository);
                   const repositoryUrl = `https://github.com/${fullRepositoryName}`;
                   const repositoryExistsResponse: HttpResponse = await this.httpClient.sendRequest({ method: "HEAD", url: repositoryUrl });
@@ -473,7 +549,7 @@ export class SwaggerToSDK {
                         if (!swaggerToSDKConfig.meta) {
                           await repoLogger.logError(`No meta property exists in ${swaggerToSDKConfigFileUrl}.`);
                         } else {
-                          const repositoryFolderPath = getRepositoryFolderPath(workingFolderPath, swaggerToSDKConfig);
+                          const repositoryFolderPath = getRepositoryFolderPath(workingFolderPath, swaggerToSDKConfig, repositoryNumber);
                           const cloneResult: jsDevTools.RunResult = await jsDevTools.gitClone(repositoryUrl, {
                             runner: this.runner,
                             depth: 1,
@@ -484,12 +560,22 @@ export class SwaggerToSDK {
                           });
                           if (cloneResult.exitCode !== 0) {
                             await repoLogger.logError(`Failed to clone ${repositoryUrl} to ${repositoryFolderPath}:`);
+                            if (cloneResult.stdout) {
+                              for (const message of getLines(cloneResult.stdout)) {
+                                if (message) {
+                                  await repoLogger.logError(message);
+                                }
+                              }
+                            }
                             if (cloneResult.stderr) {
-                              for (const errorMessage of cloneResult.stderr.split(/\r?\n/)) {
+                              for (const errorMessage of getLines(cloneResult.stderr)) {
                                 if (errorMessage) {
                                   await repoLogger.logError(errorMessage);
                                 }
                               }
+                            }
+                            if (cloneResult.error) {
+                              await repoLogger.logError(JSON.stringify(cloneResult.error));
                             }
                           } else {
                             let autorestInstallSource = `autorest`;
@@ -528,18 +614,18 @@ export class SwaggerToSDK {
 
                               const nodeModulesFolderPath: string = jsDevTools.joinPath(repositoryFolderPath, "node_modules");
                               if (jsDevTools.folderExistsSync(nodeModulesFolderPath)) {
-                                await repoLogger.logInfo(`Deleting folder ${nodeModulesFolderPath}...`);
+                                await repoLogger.logSection(`Deleting folder ${nodeModulesFolderPath}...`);
                                 jsDevTools.deleteFolder(nodeModulesFolderPath);
                               }
                               const packageLockJsonFilePath: string = jsDevTools.joinPath(repositoryFolderPath, "package-lock.json");
                               if (jsDevTools.fileExistsSync(packageLockJsonFilePath)) {
-                                await repoLogger.logInfo(`Deleting file ${packageLockJsonFilePath}...`);
+                                await repoLogger.logSection(`Deleting file ${packageLockJsonFilePath}...`);
                                 jsDevTools.deleteFile(packageLockJsonFilePath);
                               }
                               const packageJsonFilePath: string = jsDevTools.joinPath(repositoryFolderPath, "package.json");
                               if (jsDevTools.fileExistsSync(packageJsonFilePath)) {
-                                await repoLogger.logInfo(`Resetting file ${packageJsonFilePath}...`);
-                                gitCheckout("package.json", {
+                                await repoLogger.logSection(`Resetting file ${packageJsonFilePath}...`);
+                                await gitCheckout("package.json", {
                                   runner: this.runner,
                                   executionFolderPath: repositoryFolderPath,
                                   showCommand: true,
@@ -568,7 +654,7 @@ export class SwaggerToSDK {
                                 if (options.uploadClonedRepositories) {
                                   const repositoryZipFileName: string = this.getRepositoryFileName(repository, ".zip");
                                   const repositoryZipFilePath: string = jsDevTools.joinPath(workingFolderPath, repositoryZipFileName);
-                                  await repoLogger.logInfo(`Compressing ${repositoryFolderPath} to ${repositoryZipFilePath}...`);
+                                  await repoLogger.logSection(`Compressing ${repositoryFolderPath} to ${repositoryZipFilePath}...`);
                                   const compressor: jsDevTools.Compressor = this.compressorCreator();
                                   const repoFolderCompressionResult: CompressionResult = await compressor.zip(repositoryFolderPath, repositoryZipFilePath);
                                   if (repoFolderCompressionResult.warnings && repoFolderCompressionResult.warnings.length > 0) {
@@ -586,11 +672,40 @@ export class SwaggerToSDK {
                                   const repositoryZipBlobURLBuilder: URLBuilder = URLBuilder.parse(repositoryZipBlob.getURL());
                                   // Get rid of the SAS in the URL.
                                   repositoryZipBlobURLBuilder.setQuery(undefined);
-                                  repoLogger.logInfo(`Uploading compressed repository to ${repositoryZipBlobURLBuilder.toString()}...`);
+                                  repoLogger.logSection(`Uploading compressed repository to ${repositoryZipBlobURLBuilder.toString()}...`);
                                   try {
                                     await repositoryZipBlob.setContentsFromFile(repositoryZipFilePath);
                                   } finally {
                                     deleteFile(repositoryZipFilePath);
+                                  }
+                                }
+
+                                const repositoryLanguage: LanguageConfiguration | undefined = this.getLanguageForRepository(repository);
+                                if (!repositoryLanguage) {
+                                  const languageNames: string[] = jsDevTools.map(this.languages, language => language.name);
+                                  await repoLogger.logError(`No programming language registered ${JSON.stringify(languageNames)} that matches the repository ${fullRepositoryName}.`);
+                                } else {
+                                  await repoLogger.logInfo(`Repository ${fullRepositoryName} matches programming language ${repositoryLanguage.name}.`);
+                                  if (!repositoryLanguage.packageRootFileName) {
+                                    await repoLogger.logError(`No packageRootFileName property has been specified in the language configuration for ${repositoryLanguage.name}.`);
+                                  } else {
+                                    const changedPackageFolders: string[] = [];
+                                    for (const modifiedFile of gitStatusResult.modifiedFiles) {
+                                      const packageRootFilePath: string | undefined = jsDevTools.findFileInPathSync(repositoryLanguage.packageRootFileName, modifiedFile);
+                                      if (!packageRootFilePath) {
+                                        await repoLogger.logWarning(`No package root file found for modified file ${modifiedFile}.`);
+                                      } else {
+                                        await repoLogger.logVerbose(`Found package root file ${packageRootFilePath} for modified file ${modifiedFile}.`);
+                                        const packageFolderPath: string = jsDevTools.getParentFolderPath(packageRootFilePath);
+                                        if (!jsDevTools.contains(changedPackageFolders, packageFolderPath)) {
+                                          changedPackageFolders.push(packageFolderPath);
+                                        }
+                                      }
+                                    }
+                                    await repoLogger.logInfo(`Found ${changedPackageFolders.length} package folder${changedPackageFolders.length === 1 ? "" : "s"} that changed:`);
+                                    for (const changedPackageFolder of changedPackageFolders) {
+                                      await repoLogger.logInfo(`  ${changedPackageFolder}`);
+                                    }
                                   }
                                 }
                               }
@@ -600,7 +715,7 @@ export class SwaggerToSDK {
                           if (!deleteWorkingFolder) {
                             await repoLogger.logInfo(`Not deleting clone of ${fullRepositoryName} at folder ${repositoryFolderPath}.`);
                           } else {
-                            await repoLogger.logInfo(`Deleting clone of ${fullRepositoryName} at folder ${repositoryFolderPath}...`);
+                            await repoLogger.logSection(`Deleting clone of ${fullRepositoryName} at folder ${repositoryFolderPath}...`);
                             jsDevTools.deleteFolder(repositoryFolderPath);
                             await repoLogger.logInfo(`Finished deleting clone of ${fullRepositoryName} at folder ${repositoryFolderPath}.`);
                           }
@@ -618,7 +733,7 @@ export class SwaggerToSDK {
       if (!deleteWorkingFolder) {
         await logger.logInfo(`Not deleting working folder ${workingFolderPath}.`);
       } else {
-        await logger.logInfo(`Deleting working folder ${workingFolderPath}...`);
+        await logger.logSection(`Deleting working folder ${workingFolderPath}...`);
         jsDevTools.deleteFolder(workingFolderPath);
         await logger.logInfo(`Finished deleting working folder ${workingFolderPath}.`);
       }
