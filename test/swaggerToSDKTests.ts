@@ -177,7 +177,7 @@ describe("SwaggerToSDK", function () {
 
         const deleteContainer = true;
         const real = false;
-        const realStorageUrl = `https://autosdkstorage.blob.core.windows.net/?sv=2018-03-28&ss=bfqt&srt=sco&sp=rwdlacup&se=2019-02-08T04:51:46Z&st=2019-02-07T20:51:46Z&spr=https&sig=AxUugZSuDCmHm9KI7jaFMqaSsByFwSUR%2BESqVas475w%3D`;
+        const realStorageUrl = `https://autosdkstorage.blob.core.windows.net/`;
 
         const blobStorage: BlobStorage = createEndToEndBlobStorage(real, realStorageUrl);
         const workingPrefix: BlobStoragePrefix = getWorkingPrefix(blobStorage);
