@@ -1,6 +1,33 @@
 import * as jsDevTools from "@ts-common/azure-js-dev-tools";
-import { BlobStoragePrefix, CompressionResult, getCompositeLogger, getGitHubRepository, getRepositoryFullName, gitCheckout, GitHubRepository, HttpResponse, npmInstall, URLBuilder, deleteFile } from "@ts-common/azure-js-dev-tools";
+import { BlobStoragePrefix, CompressionResult, Compressor, deleteFile, getChildFilePaths, getCompositeLogger, getGitHubRepository, getRepositoryFullName, gitCheckout, GitHubRepository, HttpResponse, joinPath, npmInstall, npmPack, run, Runner, RunOptions, RunResult, URLBuilder } from "@ts-common/azure-js-dev-tools";
 import { getLines } from "@ts-common/azure-js-dev-tools/dist/lib/common";
+import * as path from "path";
+
+/**
+ * Options that can be used within a package command.
+ */
+export interface PackageCommandOptions extends RunOptions {
+  /**
+   * The path to the package folder.
+   */
+  packageFolderPath: string;
+  /**
+   * The Compressor that can be used to create archives.
+   */
+  compressor: Compressor;
+  /**
+   * The Runner that will be used to run external process commands.
+   */
+  runner: Runner | undefined;
+  /**
+   * A function that will be used to write logs.
+   */
+  log: (text: string) => Promise<any> | any;
+  /**
+   * Whether or not to write the command that will be executed to the console. Defaults to true.
+   */
+  showCommand: boolean | undefined;
+}
 
 /**
  * A configuration for how to interact with repositories in a specific programming language.
@@ -18,6 +45,14 @@ export interface LanguageConfiguration {
    * The name of a file that is found at the root of a generated package for this language.
    */
   packageRootFileName?: string;
+  /**
+   * The commands that should be run to create a package for this language.
+   */
+  packageCommands?: (((options: PackageCommandOptions) => Promise<any>) | string)[];
+  /**
+   * The file extension of a package file.
+   */
+  packageFileExtension?: string;
 }
 
 /**
@@ -26,7 +61,14 @@ export interface LanguageConfiguration {
 export const javascript: LanguageConfiguration = {
   name: "JavaScript",
   aliases: ["TypeScript", "TS", "JS", "Node", "Nodejs", "Node.js"],
-  packageRootFileName: "package.json"
+  packageRootFileName: "package.json",
+  packageCommands: [
+    options => npmPack({
+      ...options,
+      executionFolderPath: options.packageFolderPath
+    })
+  ],
+  packageFileExtension: ".tgz"
 };
 
 export const python: LanguageConfiguration = {
@@ -44,8 +86,7 @@ export const ruby: LanguageConfiguration = {
 };
 
 export const go: LanguageConfiguration = {
-  name: "Go",
-  packageRootFileName: "client.go"
+  name: "Go"
 };
 
 export const java: LanguageConfiguration = {
@@ -333,7 +374,7 @@ export function getBlobLogger(blob: jsDevTools.BlobStorageBlob): jsDevTools.Logg
  */
 export const pullRequestsContainerName = "pullrequests";
 
-export const allLogsName = "all.logs.txt";
+export const logsFileName = "logs.txt";
 
 /**
  * The collection of functions that implement the Swagger To SDK service.
@@ -384,10 +425,6 @@ export class SwaggerToSDK {
       .getPrefix(generationInstance.toString() + "/");
   }
 
-  private getAllLogsBlob(generationInstancePrefix: BlobStoragePrefix): jsDevTools.BlobStorageBlob {
-    return generationInstancePrefix.getBlob(allLogsName);
-  }
-
   private getRepositoryFileName(repository: GitHubRepository, extension: string): string {
     if (!extension.startsWith(".")) {
       extension = `.${extension}`;
@@ -395,19 +432,15 @@ export class SwaggerToSDK {
     return `${getRepositoryFullName(repository).toLowerCase().replace("/", ".")}${extension}`;
   }
 
-  private getRepositoryLogsBlob(generationInstancePrefix: BlobStoragePrefix, repository: GitHubRepository): jsDevTools.BlobStorageBlob {
-    return generationInstancePrefix.getBlob(this.getRepositoryFileName(repository, ".logs.txt"));
-  }
-
   private async createGenerationInstance(repository: jsDevTools.GitHubRepository, pullRequestNumber: number): Promise<number> {
     // Create the working prefix's container if it doesn't already exist.
     await this.workingPrefix.getContainer().create({
-      accessPolicy: "blob"
+      // accessPolicy: "blob"
     });
 
     let generationInstance = 1;
     let generationInstancePrefix: BlobStoragePrefix = this.getGenerationInstancePrefix(repository, pullRequestNumber, generationInstance);
-    while (!await this.getAllLogsBlob(generationInstancePrefix).create()) {
+    while (!await generationInstancePrefix.getBlob(logsFileName).create()) {
       ++generationInstance;
       generationInstancePrefix = this.getGenerationInstancePrefix(repository, pullRequestNumber, generationInstance);
     }
@@ -452,7 +485,7 @@ export class SwaggerToSDK {
 
     const workingFolderPath: string = await getWorkingFolderPath(options.workingFolderPath);
     const generationInstancePrefix: BlobStoragePrefix = this.getGenerationInstancePrefix(repository, pullRequestNumber, generationInstance);
-    let logger: jsDevTools.Logger = jsDevTools.wrapLogger(getBlobLogger(this.getAllLogsBlob(generationInstancePrefix)), { logVerbose: !!options.logVerbose });
+    let logger: jsDevTools.Logger = jsDevTools.wrapLogger(getBlobLogger(generationInstancePrefix.getBlob(logsFileName)), { logVerbose: !!options.logVerbose });
     if (this.logger) {
       logger = jsDevTools.getCompositeLogger(logger, this.logger);
     }
@@ -529,8 +562,12 @@ export class SwaggerToSDK {
                   if (!repository.organization) {
                     repository.organization = "Azure";
                   }
-                  const repoLogger: jsDevTools.Logger = getCompositeLogger(logger, jsDevTools.wrapLogger(getBlobLogger(this.getRepositoryLogsBlob(generationInstancePrefix, repository)), { logVerbose: !!options.logVerbose }));
                   const fullRepositoryName: string = getRepositoryFullName(repository);
+                  const repositoryPrefix: jsDevTools.BlobStoragePrefix = generationInstancePrefix.getPrefix(`${fullRepositoryName}/`);
+                  const repoLoggerBlob: jsDevTools.BlobStorageBlob = repositoryPrefix.getBlob(logsFileName);
+                  const repoLogger: jsDevTools.Logger = getCompositeLogger(logger, jsDevTools.wrapLogger(getBlobLogger(repoLoggerBlob), {
+                    logVerbose: !!options.logVerbose
+                  }));
                   const repositoryUrl = `https://github.com/${fullRepositoryName}`;
                   const repositoryExistsResponse: HttpResponse = await this.httpClient.sendRequest({ method: "HEAD", url: repositoryUrl });
                   if (repositoryExistsResponse.statusCode !== 200) {
@@ -668,13 +705,14 @@ export class SwaggerToSDK {
                                     }
                                   }
 
-                                  const repositoryZipBlob: jsDevTools.BlobStorageBlob = generationInstancePrefix.getBlob(repositoryZipFileName);
+                                  const repositoryZipBlob: jsDevTools.BlobStorageBlob = repositoryPrefix.getBlob(repositoryZipFileName);
                                   const repositoryZipBlobURLBuilder: URLBuilder = URLBuilder.parse(repositoryZipBlob.getURL());
                                   // Get rid of the SAS in the URL.
                                   repositoryZipBlobURLBuilder.setQuery(undefined);
                                   repoLogger.logSection(`Uploading compressed repository to ${repositoryZipBlobURLBuilder.toString()}...`);
                                   try {
                                     await repositoryZipBlob.setContentsFromFile(repositoryZipFilePath);
+                                    repoLogger.logInfo(`  Done uploading compressed repository to ${repositoryZipBlobURLBuilder.toString()}...`);
                                   } finally {
                                     deleteFile(repositoryZipFilePath);
                                   }
@@ -687,7 +725,7 @@ export class SwaggerToSDK {
                                 } else {
                                   await repoLogger.logInfo(`Repository ${fullRepositoryName} matches programming language ${repositoryLanguage.name}.`);
                                   if (!repositoryLanguage.packageRootFileName) {
-                                    await repoLogger.logError(`No packageRootFileName property has been specified in the language configuration for ${repositoryLanguage.name}.`);
+                                    await repoLogger.logInfo(`No packageRootFileName property has been specified in the language configuration for ${repositoryLanguage.name}.`);
                                   } else {
                                     const changedPackageFolders: string[] = [];
                                     for (const modifiedFile of gitStatusResult.modifiedFiles) {
@@ -705,6 +743,79 @@ export class SwaggerToSDK {
                                     await repoLogger.logInfo(`Found ${changedPackageFolders.length} package folder${changedPackageFolders.length === 1 ? "" : "s"} that changed:`);
                                     for (const changedPackageFolder of changedPackageFolders) {
                                       await repoLogger.logInfo(`  ${changedPackageFolder}`);
+                                    }
+
+                                    if (!repositoryLanguage.packageCommands || repositoryLanguage.packageCommands.length === 0) {
+                                      await repoLogger.logError(`${repositoryLanguage.name} has no registered package commands.`);
+                                    } else {
+                                      if (!repositoryLanguage.packageFileExtension) {
+                                        await repoLogger.logError(`${repositoryLanguage.name} has no registered package file extension.`);
+                                      }
+
+                                      for (const changedPackageFolder of changedPackageFolders) {
+                                        for (const packageCommand of repositoryLanguage.packageCommands) {
+                                          let commandResult: Promise<RunResult>;
+                                          if (typeof packageCommand === "string") {
+                                            const packageCommandArray: string[] = packageCommand.split(" ");
+                                            const command: string = packageCommandArray.shift()!;
+                                            const args: string[] = packageCommandArray;
+                                            commandResult = run(command, args, {
+                                              executionFolderPath: changedPackageFolder,
+                                              runner: this.runner,
+                                              showCommand: true,
+                                              showResult: true,
+                                              captureOutput: repoLogger.logInfo,
+                                              captureError: repoLogger.logInfo,
+                                              log: repoLogger.logInfo
+                                            });
+                                          } else {
+                                            commandResult = packageCommand(
+                                              {
+                                                packageFolderPath: changedPackageFolder,
+                                                executionFolderPath: changedPackageFolder,
+                                                compressor: this.compressorCreator(),
+                                                runner: this.runner,
+                                                log: repoLogger.logInfo,
+                                                showCommand: true,
+                                                showResult: true,
+                                                captureOutput: repoLogger.logInfo,
+                                                captureError: repoLogger.logInfo,
+                                              })
+                                              .then(() => { return { exitCode: 0 }; })
+                                              .catch((error: Error) => { return { error }; });
+                                          }
+                                          const packageCommandResult: RunResult = await commandResult;
+                                          if (packageCommandResult.exitCode !== 0) {
+                                            break;
+                                          }
+                                        }
+
+                                        if (repositoryLanguage.packageFileExtension) {
+                                          const packageFileExtension: string = repositoryLanguage.packageFileExtension;
+                                          const packagedFilePaths: string[] | undefined = getChildFilePaths(changedPackageFolder, {
+                                            recursive: true,
+                                            fileCondition: (filePath: string) => filePath.endsWith(packageFileExtension)
+                                          });
+                                          if (!packagedFilePaths || packagedFilePaths.length === 0) {
+                                            await repoLogger.logError(`No package files found in ${changedPackageFolder}.`);
+                                          } else {
+                                            await repoLogger.logInfo(`Found ${packagedFilePaths.length} package file${packagedFilePaths.length === 1 ? "" : "s"} in ${changedPackageFolder}:`);
+                                            for (const packageFilePath of packagedFilePaths) {
+                                              await repoLogger.logInfo(`  ${packageFilePath}`);
+                                            }
+
+                                            for (const packageFilePath of packagedFilePaths) {
+                                              const packageFileName: string = path.basename(packageFilePath);
+                                              const packageFileBlob: jsDevTools.BlobStorageBlob = generationInstancePrefix.getBlob(joinPath(fullRepositoryName, packageFileName));
+                                              const packageFileBlobUrl: URLBuilder = URLBuilder.parse(packageFileBlob.getURL());
+                                              packageFileBlobUrl.setQuery(undefined);
+                                              await repoLogger.logSection(`Uploading ${packageFilePath} to ${packageFileBlobUrl.toString()}...`);
+                                              await packageFileBlob.setContentsFromFile(packageFilePath);
+                                              await repoLogger.logInfo(`Done uploading ${packageFilePath} to ${packageFileBlobUrl.toString()}.`);
+                                            }
+                                          }
+                                        }
+                                      }
                                     }
                                   }
                                 }
