@@ -1,5 +1,5 @@
 import * as jsDevTools from "@ts-common/azure-js-dev-tools";
-import { BlobStoragePrefix, CompressionResult, Compressor, deleteFile, getChildFilePaths, getCompositeLogger, getGitHubRepository, getRepositoryFullName, gitCheckout, GitHubRepository, HttpResponse, joinPath, npmInstall, npmPack, run, Runner, RunOptions, RunResult, URLBuilder } from "@ts-common/azure-js-dev-tools";
+import { BlobStorageBlob, BlobStoragePrefix, CompressionResult, Compressor, deleteFile, FakeGitHub, getChildFilePaths, getCompositeLogger, getGitHubRepository, getRepositoryFullName, gitCheckout, GitHub, GitHubComment, GitHubRepository, HttpResponse, joinPath, npmInstall, npmPack, run, Runner, RunOptions, RunResult, URLBuilder } from "@ts-common/azure-js-dev-tools";
 import { getLines } from "@ts-common/azure-js-dev-tools/dist/lib/common";
 import * as path from "path";
 
@@ -264,6 +264,11 @@ export interface SwaggerToSDKOptions {
    * The languages that have been configured.
    */
   languages?: LanguageConfiguration[] | ((defaultLanguages: LanguageConfiguration[]) => LanguageConfiguration[]);
+  /**
+   * The GitHub object that SwaggerToSDK will use to create and update comments and to create pull
+   * requests.
+   */
+  github?: GitHub;
 }
 
 /**
@@ -386,6 +391,7 @@ export class SwaggerToSDK {
   public readonly runner: jsDevTools.Runner | undefined;
   public readonly compressorCreator: () => jsDevTools.Compressor;
   public readonly languages: LanguageConfiguration[];
+  public readonly github: GitHub;
 
   constructor(workingPrefix: jsDevTools.BlobStoragePrefix, options?: SwaggerToSDKOptions) {
     options = options || {};
@@ -412,6 +418,8 @@ export class SwaggerToSDK {
         this.languages = defaultLanguages;
       }
     }
+
+    this.github = options.github || new FakeGitHub();
   }
 
   private getPullRequestPrefix(repository: jsDevTools.GitHubRepository, pullRequestNumber: number): jsDevTools.BlobStoragePrefix {
@@ -435,7 +443,7 @@ export class SwaggerToSDK {
   private async createGenerationInstance(repository: jsDevTools.GitHubRepository, pullRequestNumber: number): Promise<number> {
     // Create the working prefix's container if it doesn't already exist.
     await this.workingPrefix.getContainer().create({
-      // accessPolicy: "blob"
+      accessPolicy: "blob"
     });
 
     let generationInstance = 1;
@@ -475,22 +483,97 @@ export class SwaggerToSDK {
   public async pullRequestChange(pullRequestChangeBody: jsDevTools.GitHubPullRequestWebhookBody, options?: SwaggerToSDKPullRequestChangeOptions): Promise<void> {
     options = options || {};
 
+    const github: GitHub = this.github;
+
     const deleteWorkingFolder: boolean = options.deleteClonedRepositories != undefined ? options.deleteClonedRepositories : true;
 
     const apiPullRequest: jsDevTools.GitHubPullRequest = pullRequestChangeBody.pull_request;
 
-    const repository: jsDevTools.GitHubRepository = jsDevTools.getGitHubRepository("Azure/azure-rest-api-specs");
+    const pullRequestRepository: jsDevTools.GitHubRepository = jsDevTools.getGitHubRepository("Azure/azure-rest-api-specs");
+    const pullRequestRepositoryFullName: string = getRepositoryFullName(pullRequestRepository);
     const pullRequestNumber: number = apiPullRequest.number;
-    const generationInstance: number = await this.createGenerationInstance(repository, pullRequestNumber);
+    const generationInstance: number = await this.createGenerationInstance(pullRequestRepository, pullRequestNumber);
+    const previousGenerationInstance: number = generationInstance - 1;
+    const nextGenerationInstance: number = generationInstance + 1;
 
     const workingFolderPath: string = await getWorkingFolderPath(options.workingFolderPath);
-    const generationInstancePrefix: BlobStoragePrefix = this.getGenerationInstancePrefix(repository, pullRequestNumber, generationInstance);
-    let logger: jsDevTools.Logger = jsDevTools.wrapLogger(getBlobLogger(generationInstancePrefix.getBlob(logsFileName)), { logVerbose: !!options.logVerbose });
+    const pullRequestPrefix: BlobStoragePrefix = this.getPullRequestPrefix(pullRequestRepository, pullRequestNumber);
+
+    const generationInstancePrefix: BlobStoragePrefix = pullRequestPrefix.getPrefix(generationInstance.toString() + "/");
+    const previousGenerationInstancePrefix: BlobStoragePrefix = pullRequestPrefix.getPrefix(previousGenerationInstance.toString() + "/");
+    const nextGenerationInstancePrefix: BlobStoragePrefix = pullRequestPrefix.getPrefix(nextGenerationInstance.toString() + "/");
+    const logsBlob: jsDevTools.BlobStorageBlob = generationInstancePrefix.getBlob(logsFileName);
+    let logger: jsDevTools.Logger = jsDevTools.wrapLogger(getBlobLogger(logsBlob), { logVerbose: !!options.logVerbose });
     if (this.logger) {
       logger = jsDevTools.getCompositeLogger(logger, this.logger);
     }
     try {
       await logger.logSection(`Received pull request change webhook request from GitHub for "${apiPullRequest.html_url}".`);
+
+      const generationBlob: BlobStorageBlob = generationInstancePrefix.getBlob("generation.json");
+      const previousGenerationBlob: BlobStorageBlob = previousGenerationInstancePrefix.getBlob("generation.json");
+      const nextGenerationBlob: BlobStorageBlob = nextGenerationInstancePrefix.getBlob("generation.json");
+
+      await logger.logSection(`Getting generation state from ${URLBuilder.parse(previousGenerationBlob.getURL()).setQuery(undefined).toString()}...`);
+
+      const generationHtmlBlob: BlobStorageBlob = generationInstancePrefix.getBlob("generation.html");
+
+      async function postGenerationStateToBlobs(generation: Generation, generationHTML: string): Promise<any> {
+        return Promise.all([
+          writeGenerationToBlob(generationBlob, generation),
+          generationHtmlBlob.setContentsFromString(generationHTML, { contentType: "text/html" })
+        ]);
+      }
+
+      const generation: Generation = await previousGenerationBlob.getContentsAsString()
+        .then(async (previousGenerationBlobContent: string | undefined) => {
+          let previousGenerationCommentIdPromise: Promise<number>;
+          if (previousGenerationBlobContent) {
+            try {
+              const previousGeneration: Generation = JSON.parse(previousGenerationBlobContent);
+              previousGenerationCommentIdPromise = Promise.resolve(previousGeneration.commentId);
+            } catch (error) {
+              const errorMessage = `Failed to parse generation blob content: ${JSON.stringify(error)}`;
+              await logger.logError(errorMessage);
+              previousGenerationCommentIdPromise = Promise.reject(error);
+            }
+          } else {
+            const errorMessage = "Generation blob didn't have any content.";
+            await logger.logError(errorMessage);
+            previousGenerationCommentIdPromise = Promise.reject(new Error(errorMessage));
+          }
+          return previousGenerationCommentIdPromise;
+        })
+        .catch(async () => {
+          const newCommentText: string = getGenerationHTML().join("");
+          const newComment: GitHubComment = await github.createPullRequestComment(pullRequestRepository, pullRequestNumber, newCommentText);
+          return newComment.id;
+        })
+        .then(async (commentId: number) => {
+          const newGeneration: Generation = {
+            pullRequestRepositoryFullName,
+            pullRequestNumber,
+            commentId,
+            logsBlobUrl: URLBuilder.parse(logsBlob.getURL()).setQuery(undefined).toString(),
+            repositories: {}
+          };
+          await postGenerationStateToBlobs(newGeneration, getGenerationHTML(newGeneration).join(""));
+          return newGeneration;
+        });
+
+      async function postGenerationState(generation: Generation): Promise<any> {
+        const generationHTML: string = getGenerationHTML(generation).join("");
+
+        const resultPromises: Promise<any>[] = [];
+
+        resultPromises.push(postGenerationStateToBlobs(generation, generationHTML));
+
+        if (await nextGenerationBlob.exists()) {
+          resultPromises.push(github.updatePullRequestComment(pullRequestRepository, pullRequestNumber, generation.commentId, generationHTML));
+        }
+
+        return Promise.all(resultPromises);
+      }
 
       await logger.logSection(`Getting diff_url (${apiPullRequest.diff_url}) contents...`);
       const diffUrlResponse: jsDevTools.HttpResponse = await this.httpClient.sendRequest({ method: "GET", url: apiPullRequest.diff_url });
@@ -553,15 +636,24 @@ export class SwaggerToSDK {
               } else {
                 await logger.logInfo(`Found ${swaggerToSDKConfiguration.repositories.length} requested SDK repositories:`);
                 for (const requestedRepository of swaggerToSDKConfiguration.repositories) {
-                  await logger.logInfo(requestedRepository.repo);
-                }
-                let repositoryIndex = 0;
-                for (const requestedRepository of swaggerToSDKConfiguration.repositories) {
-                  const repositoryNumber: number = ++repositoryIndex;
                   const repository: GitHubRepository = getGitHubRepository(requestedRepository.repo);
                   if (!repository.organization) {
                     repository.organization = "Azure";
                   }
+                  requestedRepository.repo = getRepositoryFullName(repository);
+                  await logger.logInfo(requestedRepository.repo);
+                  generation.repositories[requestedRepository.repo] = {
+                    fullName: requestedRepository.repo,
+                    status: "pending"
+                  };
+                }
+
+                await postGenerationState(generation);
+
+                let repositoryIndex = 0;
+                for (const requestedRepository of swaggerToSDKConfiguration.repositories) {
+                  const repositoryNumber: number = ++repositoryIndex;
+                  const repository: GitHubRepository = getGitHubRepository(requestedRepository.repo);
                   const fullRepositoryName: string = getRepositoryFullName(repository);
                   const repositoryPrefix: jsDevTools.BlobStoragePrefix = generationInstancePrefix.getPrefix(`${fullRepositoryName}/`);
                   const repoLoggerBlob: jsDevTools.BlobStorageBlob = repositoryPrefix.getBlob(logsFileName);
@@ -569,22 +661,37 @@ export class SwaggerToSDK {
                     logVerbose: !!options.logVerbose
                   }));
                   const repositoryUrl = `https://github.com/${fullRepositoryName}`;
+                  await repoLogger.logSection(`Checking if ${repositoryUrl} exists...`);
+
+                  const generationRepository: GenerationRepository = generation.repositories[fullRepositoryName];
+                  generationRepository.status = "inProgress";
+                  generationRepository.logsBlobUrl = URLBuilder.parse(repoLoggerBlob.getURL()).setQuery(undefined).toString();
+                  await postGenerationState(generation);
+
+                  function repoError(errorMessage: string): Promise<any> {
+                    generationRepository.status = "failed";
+                    return Promise.all([
+                      repoLogger.logError(errorMessage),
+                      postGenerationState(generation)
+                    ]);
+                  }
+
                   const repositoryExistsResponse: HttpResponse = await this.httpClient.sendRequest({ method: "HEAD", url: repositoryUrl });
                   if (repositoryExistsResponse.statusCode !== 200) {
-                    await repoLogger.logError(`Could not find a repository at ${repositoryUrl}.`);
+                    await repoError(`Could not find a repository at ${repositoryUrl}.`);
                   } else {
                     const swaggerToSDKConfigFileUrl = `https://raw.githubusercontent.com/${fullRepositoryName}/master/swagger_to_sdk_config.json`;
                     const swaggerToSDKConfigFileResponse: HttpResponse = await this.httpClient.sendRequest({ method: "GET", url: swaggerToSDKConfigFileUrl });
                     if (swaggerToSDKConfigFileResponse.statusCode !== 200) {
-                      await repoLogger.logError(`Could not find a swagger_to_sdk_config.json file at ${swaggerToSDKConfigFileUrl}.`);
+                      await repoError(`Could not find a swagger_to_sdk_config.json file at ${swaggerToSDKConfigFileUrl}.`);
                     } else {
                       const swaggerToSDKConfigFileContents: string | undefined = swaggerToSDKConfigFileResponse.body;
                       if (!swaggerToSDKConfigFileContents) {
-                        await repoLogger.logError(`The swagger_to_sdk_config.json file at ${swaggerToSDKConfigFileUrl} is empty.`);
+                        await repoError(`The swagger_to_sdk_config.json file at ${swaggerToSDKConfigFileUrl} is empty.`);
                       } else {
                         const swaggerToSDKConfig: SwaggerToSDKConfiguration = JSON.parse(swaggerToSDKConfigFileContents);
                         if (!swaggerToSDKConfig.meta) {
-                          await repoLogger.logError(`No meta property exists in ${swaggerToSDKConfigFileUrl}.`);
+                          await repoError(`No meta property exists in ${swaggerToSDKConfigFileUrl}.`);
                         } else {
                           const repositoryFolderPath = getRepositoryFolderPath(workingFolderPath, swaggerToSDKConfig, repositoryNumber);
                           const cloneResult: jsDevTools.RunResult = await jsDevTools.gitClone(repositoryUrl, {
@@ -596,23 +703,23 @@ export class SwaggerToSDK {
                             showCommand: true
                           });
                           if (cloneResult.exitCode !== 0) {
-                            await repoLogger.logError(`Failed to clone ${repositoryUrl} to ${repositoryFolderPath}:`);
+                            await repoError(`Failed to clone ${repositoryUrl} to ${repositoryFolderPath}:`);
                             if (cloneResult.stdout) {
                               for (const message of getLines(cloneResult.stdout)) {
                                 if (message) {
-                                  await repoLogger.logError(message);
+                                  await repoError(message);
                                 }
                               }
                             }
                             if (cloneResult.stderr) {
                               for (const errorMessage of getLines(cloneResult.stderr)) {
                                 if (errorMessage) {
-                                  await repoLogger.logError(errorMessage);
+                                  await repoError(errorMessage);
                                 }
                               }
                             }
                             if (cloneResult.error) {
-                              await repoLogger.logError(JSON.stringify(cloneResult.error));
+                              await repoError(JSON.stringify(cloneResult.error));
                             }
                           } else {
                             let autorestInstallSource = `autorest`;
@@ -627,7 +734,7 @@ export class SwaggerToSDK {
                               log: repoLogger.logInfo
                             });
                             if (installAutorestResult.exitCode !== 0) {
-                              await repoLogger.logError(`Failed to install ${autorestInstallSource}.`);
+                              await repoError(`Failed to install ${autorestInstallSource}.`);
                             } else {
                               const autorestOptions: jsDevTools.AutoRestOptions = swaggerToSDKConfig.meta.autorest_options || {};
 
@@ -671,7 +778,7 @@ export class SwaggerToSDK {
                               }
 
                               if (autorestResult.exitCode !== 0) {
-                                await repoLogger.logError(`Failed to run autorest.`);
+                                await repoError(`Failed to run autorest.`);
                               } else {
                                 const gitStatusResult: jsDevTools.GitStatusResult = await jsDevTools.gitStatus({
                                   runner: this.runner,
@@ -701,7 +808,7 @@ export class SwaggerToSDK {
                                   }
                                   if (repoFolderCompressionResult.errors && repoFolderCompressionResult.errors.length > 0) {
                                     for (const error of repoFolderCompressionResult.errors) {
-                                      await repoLogger.logError(JSON.stringify(error));
+                                      await repoError(JSON.stringify(error));
                                     }
                                   }
 
@@ -721,7 +828,7 @@ export class SwaggerToSDK {
                                 const repositoryLanguage: LanguageConfiguration | undefined = this.getLanguageForRepository(repository);
                                 if (!repositoryLanguage) {
                                   const languageNames: string[] = jsDevTools.map(this.languages, language => language.name);
-                                  await repoLogger.logError(`No programming language registered ${JSON.stringify(languageNames)} that matches the repository ${fullRepositoryName}.`);
+                                  await repoError(`No programming language registered ${JSON.stringify(languageNames)} that matches the repository ${fullRepositoryName}.`);
                                 } else {
                                   await repoLogger.logInfo(`Repository ${fullRepositoryName} matches programming language ${repositoryLanguage.name}.`);
                                   if (!repositoryLanguage.packageRootFileName) {
@@ -746,10 +853,10 @@ export class SwaggerToSDK {
                                     }
 
                                     if (!repositoryLanguage.packageCommands || repositoryLanguage.packageCommands.length === 0) {
-                                      await repoLogger.logError(`${repositoryLanguage.name} has no registered package commands.`);
+                                      await repoLogger.logWarning(`${repositoryLanguage.name} has no registered package commands.`);
                                     } else {
                                       if (!repositoryLanguage.packageFileExtension) {
-                                        await repoLogger.logError(`${repositoryLanguage.name} has no registered package file extension.`);
+                                        await repoLogger.logWarning(`${repositoryLanguage.name} has no registered package file extension.`);
                                       }
 
                                       for (const changedPackageFolder of changedPackageFolders) {
@@ -797,7 +904,7 @@ export class SwaggerToSDK {
                                             fileCondition: (filePath: string) => filePath.endsWith(packageFileExtension)
                                           });
                                           if (!packagedFilePaths || packagedFilePaths.length === 0) {
-                                            await repoLogger.logError(`No package files found in ${changedPackageFolder}.`);
+                                            await repoLogger.logWarning(`No package files found in ${changedPackageFolder}.`);
                                           } else {
                                             await repoLogger.logInfo(`Found ${packagedFilePaths.length} package file${packagedFilePaths.length === 1 ? "" : "s"} in ${changedPackageFolder}:`);
                                             for (const packageFilePath of packagedFilePaths) {
@@ -807,11 +914,12 @@ export class SwaggerToSDK {
                                             for (const packageFilePath of packagedFilePaths) {
                                               const packageFileName: string = path.basename(packageFilePath);
                                               const packageFileBlob: jsDevTools.BlobStorageBlob = generationInstancePrefix.getBlob(joinPath(fullRepositoryName, packageFileName));
-                                              const packageFileBlobUrl: URLBuilder = URLBuilder.parse(packageFileBlob.getURL());
-                                              packageFileBlobUrl.setQuery(undefined);
-                                              await repoLogger.logSection(`Uploading ${packageFilePath} to ${packageFileBlobUrl.toString()}...`);
+                                              const packageFileBlobUrl: string = URLBuilder.parse(packageFileBlob.getURL()).setQuery(undefined).toString();
+                                              await repoLogger.logSection(`Uploading ${packageFilePath} to ${packageFileBlobUrl}...`);
                                               await packageFileBlob.setContentsFromFile(packageFilePath);
-                                              await repoLogger.logInfo(`Done uploading ${packageFilePath} to ${packageFileBlobUrl.toString()}.`);
+                                              await repoLogger.logInfo(`Done uploading ${packageFilePath} to ${packageFileBlobUrl}.`);
+
+                                              generationRepository.packageBlobUrl = packageFileBlobUrl;
                                             }
                                           }
                                         }
@@ -821,6 +929,11 @@ export class SwaggerToSDK {
                                 }
                               }
                             }
+                          }
+
+                          if (generationRepository.status === "inProgress") {
+                            generationRepository.status = "succeeded";
+                            await postGenerationState(generation);
                           }
 
                           if (!deleteWorkingFolder) {
@@ -850,4 +963,99 @@ export class SwaggerToSDK {
       }
     }
   }
+}
+
+function writeGenerationToBlob(blob: BlobStorageBlob, generation: Generation): Promise<any> {
+  return blob.setContentsFromString(
+    JSON.stringify(generation, undefined, 2),
+    { contentType: "text/json" });
+}
+
+export interface Generation {
+  pullRequestRepositoryFullName: string;
+  pullRequestNumber: number;
+  commentId: number;
+  logsBlobUrl: string;
+  repositories: jsDevTools.StringMap<GenerationRepository>;
+}
+
+export const generationStatus = {
+  pending: `Pending`,
+  inProgress: `In-Progress`,
+  failed: `Failed`,
+  succeeded: `Succeeded`
+};
+
+export interface GenerationRepository {
+  fullName: string;
+  status: keyof typeof generationStatus;
+  logsBlobUrl?: string;
+  packageBlobUrl?: string;
+  pullRequestUrl?: string;
+}
+
+export function getRepositoryHTML(repositoryFullName: string): string {
+  return `<a href="https://github.com/${repositoryFullName}">${repositoryFullName}</a>`;
+}
+
+export function getGenerationStatusHTML(status: keyof typeof generationStatus): string {
+  return generationStatus[status];
+}
+
+export function getLogsHTML(logsBlobUrl: string | undefined): string {
+  let result = `Logs`;
+  if (logsBlobUrl) {
+    result = `<a href="${logsBlobUrl}">${result}</a>`;
+  }
+  return result;
+}
+
+export function getPackageHTML(packageBlobUrl: string | undefined): string {
+  let result = `Package`;
+  if (packageBlobUrl) {
+    result = `<a href="${packageBlobUrl}">${result}</a>`;
+  }
+  return result;
+}
+
+export function getPullRequestHTML(pullRequestUrl: string | undefined): string {
+  let result = `Pull Request`;
+  if (pullRequestUrl) {
+    result = `<a href="${pullRequestUrl}">${result}</a>`;
+  }
+  return result;
+}
+
+/**
+ * Get the HTML that describes the current state of a generation.
+ * @param generation The current state of a generation.
+ */
+export function getGenerationHTML(generation?: Generation): string[] {
+  const result: string[] = [];
+  result.push(`<html>`);
+  result.push(`<body>`);
+  result.push(`<h1>Generation Progress</h1>`);
+  if (generation) {
+    result.push(`<a href="${generation.logsBlobUrl}">Generation Logs</a>`);
+    if (generation.repositories) {
+      const repositoryFullNames: string[] = Object.keys(generation.repositories);
+      if (repositoryFullNames && repositoryFullNames.length > 0) {
+        result.push(`<table>`);
+        for (const repositoryFullName of repositoryFullNames) {
+          const generationRepository: GenerationRepository = generation.repositories[repositoryFullName];
+          result.push(`<tr>`);
+          result.push(`<td>${getRepositoryHTML(generationRepository.fullName)}</td>`);
+          result.push(`<td>${getGenerationStatusHTML(generationRepository.status)}</td>`);
+          result.push(`<td>${getLogsHTML(generationRepository.logsBlobUrl)}</td>`);
+          result.push(`<td>${getPackageHTML(generationRepository.packageBlobUrl)}</td>`);
+          result.push(`<td>${getPullRequestHTML(generationRepository.pullRequestUrl)}</td>`);
+          result.push(`</tr>`);
+        }
+        result.push(`</table>`);
+      }
+    }
+  }
+  result.push(`</body>`);
+  result.push(`</html>`);
+  return result;
 }
