@@ -1,7 +1,7 @@
-import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, createFolder, deleteFolder, FakeCompressor, FakeRunner, getInMemoryLogger, getParentFolderPath, getRootPath, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealGitHub, RealRunner, Runner, writeFileContents, URLBuilder } from "@ts-common/azure-js-dev-tools";
+import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, createFolder, deleteFolder, FakeCompressor, FakeGitHub, FakeRunner, first, getInMemoryLogger, getParentFolderPath, getRootPath, GitHubComment, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealGitHub, RealRunner, Runner, URLBuilder, writeFileContents } from "@ts-common/azure-js-dev-tools";
 import { getLines } from "@ts-common/azure-js-dev-tools/dist/lib/common";
 import { assert } from "chai";
-import { logsFileName, getWorkingFolderPath, SwaggerToSDK } from "../lib/swaggerToSDK";
+import { getGenerationHTML, getWorkingFolderPath, logsFileName, Generation, generationStatus, SwaggerToSDK } from "../lib/swaggerToSDK";
 
 const baseCommit: GitHubCommit = {
   label: "Azure:master",
@@ -19,6 +19,7 @@ const pullRequestMergeCommitSha = "5d204450e3ea6709a034208af441ebaaa87bd805";
 const pullRequestId = 242467286;
 const pullRequestNumber = 4994;
 const pullRequestTitle = "Fix mysql sku values";
+const pullRequestRepository = "Azure/azure-rest-api-specs";
 
 const pullRequest: GitHubPullRequest = {
   base: baseCommit,
@@ -29,9 +30,9 @@ const pullRequest: GitHubPullRequest = {
   number: pullRequestNumber,
   state: "open",
   title: pullRequestTitle,
-  url: `https://api.github.com/repos/Azure/azure-rest-api-specs/pulls/${pullRequestNumber}`,
-  html_url: `https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}`,
-  diff_url: `https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}.diff`,
+  url: `https://api.github.com/repos/${pullRequestRepository}/pulls/${pullRequestNumber}`,
+  html_url: `https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}`,
+  diff_url: `https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}.diff`,
   milestone: undefined,
   assignees: undefined
 };
@@ -44,7 +45,7 @@ function getWorkingPrefix(blobStorage: BlobStorage): BlobStoragePrefix {
 describe("SwaggerToSDK", function () {
   it("getPullRequest()", async function () {
     const github = new RealGitHub();
-    const pullRequest: GitHubPullRequest = await github.getPullRequest("Azure/azure-rest-api-specs", pullRequestNumber);
+    const pullRequest: GitHubPullRequest = await github.getPullRequest(pullRequestRepository, pullRequestNumber);
     assert(pullRequest);
     assert(pullRequest.base);
     assert.strictEqual(pullRequest.base.label, "Azure:master");
@@ -59,9 +60,9 @@ describe("SwaggerToSDK", function () {
     assert.strictEqual(pullRequest.number, pullRequestNumber);
     assert.strictEqual(pullRequest.state, "closed");
     assert.strictEqual(pullRequest.title, pullRequestTitle);
-    assert.strictEqual(pullRequest.url, `https://api.github.com/repos/Azure/azure-rest-api-specs/pulls/${pullRequestNumber}`);
-    assert.strictEqual(pullRequest.html_url, `https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}`);
-    assert.strictEqual(pullRequest.diff_url, `https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}.diff`);
+    assert.strictEqual(pullRequest.url, `https://api.github.com/repos/${pullRequestRepository}/pulls/${pullRequestNumber}`);
+    assert.strictEqual(pullRequest.html_url, `https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}`);
+    assert.strictEqual(pullRequest.diff_url, `https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}.diff`);
   });
 
   describe("constructor()", function () {
@@ -104,6 +105,192 @@ describe("SwaggerToSDK", function () {
     });
   });
 
+  describe("getSpecPRStatusHTML()", function () {
+    it("with no arguments", function () {
+      assert.deepEqual(getGenerationHTML(), [
+        `<html>`,
+        `<body>`,
+        `<h1>Generation Progress</h1>`,
+        `</body>`,
+        `</html>`
+      ]);
+    });
+
+    it("with undefined specPRComment", function () {
+      assert.deepEqual(getGenerationHTML(undefined), [
+        `<html>`,
+        `<body>`,
+        `<h1>Generation Progress</h1>`,
+        `</body>`,
+        `</html>`
+      ]);
+    });
+
+    it("with commentId", function () {
+      const generation: Generation = {
+        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
+        pullRequestNumber: 60,
+        commentId: 50,
+        logsBlobUrl: "fake_logs_blob_url",
+        repositories: {}
+      };
+      assert.deepEqual(getGenerationHTML(generation), [
+        `<html>`,
+        `<body>`,
+        `<h1>Generation Progress</h1>`,
+        `<a href=\"fake_logs_blob_url\">Generation Logs</a>`,
+        `</body>`,
+        `</html>`
+      ]);
+    });
+
+    it("with empty repositories array", function () {
+      const generation: Generation = {
+        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
+        pullRequestNumber: 60,
+        commentId: 50,
+        logsBlobUrl: "fake_logs_blob_url",
+        repositories: {}
+      };
+      assert.deepEqual(getGenerationHTML(generation), [
+        `<html>`,
+        `<body>`,
+        `<h1>Generation Progress</h1>`,
+        `<a href=\"fake_logs_blob_url\">Generation Logs</a>`,
+        `</body>`,
+        `</html>`
+      ]);
+    });
+
+    it("with one successful repository", function () {
+      const generation: Generation = {
+        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
+        pullRequestNumber: 60,
+        commentId: 50,
+        logsBlobUrl: "fake_logs_blob_url",
+        repositories: {
+          "Azure/azure-sdk-for-js": {
+            fullName: "Azure/azure-sdk-for-js",
+            status: "succeeded"
+          }
+        }
+      };
+      assert.deepEqual(getGenerationHTML(generation), [
+        `<html>`,
+        `<body>`,
+        `<h1>Generation Progress</h1>`,
+        `<a href=\"fake_logs_blob_url\">Generation Logs</a>`,
+        `<table>`,
+        `<tr>`,
+        `<td><a href="https://github.com/Azure/azure-sdk-for-js">Azure/azure-sdk-for-js</a></td>`,
+        `<td>${generationStatus.succeeded}</td>`,
+        `<td>Logs</td>`,
+        `<td>Package</td>`,
+        `<td>Pull Request</td>`,
+        `</tr>`,
+        `</table>`,
+        `</body>`,
+        `</html>`
+      ]);
+    });
+
+    it("with one failed repository", function () {
+      const generation: Generation = {
+        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
+        pullRequestNumber: 60,
+        commentId: 50,
+        logsBlobUrl: "fake_logs_blob_url",
+        repositories: {
+          "Azure/azure-sdk-for-js": {
+            fullName: "Azure/azure-sdk-for-js",
+            status: "failed"
+          }
+        }
+      };
+      assert.deepEqual(getGenerationHTML(generation), [
+        `<html>`,
+        `<body>`,
+        `<h1>Generation Progress</h1>`,
+        `<a href=\"fake_logs_blob_url\">Generation Logs</a>`,
+        `<table>`,
+        `<tr>`,
+        `<td><a href="https://github.com/Azure/azure-sdk-for-js">Azure/azure-sdk-for-js</a></td>`,
+        `<td>${generationStatus.failed}</td>`,
+        `<td>Logs</td>`,
+        `<td>Package</td>`,
+        `<td>Pull Request</td>`,
+        `</tr>`,
+        `</table>`,
+        `</body>`,
+        `</html>`
+      ]);
+    });
+
+    it("with one in-progress repository", function () {
+      const generation: Generation = {
+        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
+        pullRequestNumber: 60,
+        commentId: 50,
+        logsBlobUrl: "fake_logs_blob_url",
+        repositories: {
+          "Azure/azure-sdk-for-js": {
+            fullName: "Azure/azure-sdk-for-js",
+            status: "inProgress"
+          }
+        }
+      };
+      assert.deepEqual(getGenerationHTML(generation), [
+        `<html>`,
+        `<body>`,
+        `<h1>Generation Progress</h1>`,
+        `<a href=\"fake_logs_blob_url\">Generation Logs</a>`,
+        `<table>`,
+        `<tr>`,
+        `<td><a href="https://github.com/Azure/azure-sdk-for-js">Azure/azure-sdk-for-js</a></td>`,
+        `<td>${generationStatus.inProgress}</td>`,
+        `<td>Logs</td>`,
+        `<td>Package</td>`,
+        `<td>Pull Request</td>`,
+        `</tr>`,
+        `</table>`,
+        `</body>`,
+        `</html>`
+      ]);
+    });
+
+    it("with one pending repository", function () {
+      const generation: Generation = {
+        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
+        pullRequestNumber: 60,
+        commentId: 50,
+        logsBlobUrl: "fake_logs_blob_url",
+        repositories: {
+          "Azure/azure-sdk-for-js": {
+            fullName: "Azure/azure-sdk-for-js",
+            status: "pending"
+          }
+        }
+      };
+      assert.deepEqual(getGenerationHTML(generation), [
+        `<html>`,
+        `<body>`,
+        `<h1>Generation Progress</h1>`,
+        `<a href=\"fake_logs_blob_url\">Generation Logs</a>`,
+        `<table>`,
+        `<tr>`,
+        `<td><a href="https://github.com/Azure/azure-sdk-for-js">Azure/azure-sdk-for-js</a></td>`,
+        `<td>${generationStatus.pending}</td>`,
+        `<td>Logs</td>`,
+        `<td>Package</td>`,
+        `<td>Pull Request</td>`,
+        `</tr>`,
+        `</table>`,
+        `</body>`,
+        `</html>`
+      ]);
+    });
+  });
+
   describe("pullRequestChange()", function () {
     describe("pull request created", function () {
       it("when diff_url returns 404", async function () {
@@ -120,7 +307,7 @@ describe("SwaggerToSDK", function () {
             });
           }
         };
-        const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger, httpClient });
+        const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger, httpClient, github: await createEndToEndGitHub() });
         const webhookBody: GitHubPullRequestWebhookBody = {
           action: "opened",
           number: 1,
@@ -130,8 +317,9 @@ describe("SwaggerToSDK", function () {
         await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: rootPath });
 
         assert.deepEqual(logger.allLogs, [
-          `Received pull request change webhook request from GitHub for "https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}".`,
-          `Getting diff_url (https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}.diff) contents...`,
+          `Received pull request change webhook request from GitHub for "https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}".`,
+          `Getting generation state from https://fake.storage.com/abc5/${pullRequestRepository}/4994/0/generation.json...`,
+          `Getting diff_url (https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}.diff) contents...`,
           `diff_url response status code is 404.`,
           `Deleting working folder ${rootPath}/1...`,
           `Finished deleting working folder ${rootPath}/1.`
@@ -153,7 +341,7 @@ describe("SwaggerToSDK", function () {
             });
           }
         };
-        const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger, httpClient });
+        const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger, httpClient, github: await createEndToEndGitHub() });
         const webhookBody: GitHubPullRequestWebhookBody = {
           action: "opened",
           number: 1,
@@ -163,8 +351,9 @@ describe("SwaggerToSDK", function () {
         await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: rootPath });
 
         assert.deepEqual(logger.allLogs, [
-          `Received pull request change webhook request from GitHub for "https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}".`,
-          `Getting diff_url (https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}.diff) contents...`,
+          `Received pull request change webhook request from GitHub for "https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}".`,
+          `Getting generation state from https://fake.storage.com/abc6/${pullRequestRepository}/4994/0/generation.json...`,
+          `Getting diff_url (https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}.diff) contents...`,
           `diff_url response status code is 200.`,
           `diff_url response body is empty.`,
           `Deleting working folder ${rootPath}/1...`,
@@ -196,7 +385,8 @@ describe("SwaggerToSDK", function () {
           const npm: string = npmExecutable();
           const autorest: string = autorestExecutable({ autorestPath: "./node_modules/.bin/autorest" });
           const runner: Runner = createEndToEndRunner({ real, npm, autorest, baseWorkingFolderPath });
-          const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger, httpClient, runner, compressorCreator });
+          const github: FakeGitHub = await createEndToEndGitHub();
+          const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger, httpClient, runner, compressorCreator, github });
           const webhookBody: GitHubPullRequestWebhookBody = {
             action: "opened",
             number: 1,
@@ -212,13 +402,14 @@ describe("SwaggerToSDK", function () {
 
           assert.strictEqual(await workingPrefix.getContainer().exists(), true);
 
-          const generationInstancePrefix: BlobStoragePrefix = workingPrefix.getPrefix(`Azure/azure-rest-api-specs/${pullRequest.number}/1/`);
+          const pullRequestPrefix: BlobStoragePrefix = workingPrefix.getPrefix(`${pullRequestRepository}/${pullRequest.number}/`);
+          const generationInstancePrefix: BlobStoragePrefix = pullRequestPrefix.getPrefix(`1/`);
 
           const allLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob(logsFileName);
           assert.strictEqual(await allLogsBlob.exists(), true);
           assert.strictEqual(await allLogsBlob.getContentType(), "text/plain");
           const expectedLogs: string[] = [
-            `Received pull request change webhook request from GitHub for "https://github.com/Azure/azure-rest-api-specs/pull/${pullRequestNumber}".`,
+            `Received pull request change webhook request from GitHub for "https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}".`,
             `diff_url response status code is 200.`,
             `diff_url response body contains 189 lines.`,
             `diff_url response body contains 5 "diff --git" lines.`,
@@ -240,11 +431,11 @@ describe("SwaggerToSDK", function () {
             `Getting file contents for "https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md"...`,
             `Merged readme.md response status code is 200.`,
             `Found 5 requested SDK repositories:`,
-            `azure-sdk-for-python`,
-            `azure-sdk-for-java`,
-            `azure-sdk-for-go`,
-            `azure-sdk-for-js`,
-            `azure-sdk-for-node`,
+            `Azure/azure-sdk-for-python`,
+            `Azure/azure-sdk-for-java`,
+            `Azure/azure-sdk-for-go`,
+            `Azure/azure-sdk-for-js`,
+            `Azure/azure-sdk-for-node`,
             `git clone --quiet --depth 1 https://github.com/Azure/azure-sdk-for-python ${pythonFolderPath}`,
             `${pythonFolderPath}: ${npm} install autorest`,
             `${pythonFolderPath}: ${autorest} --version=preview --use=@microsoft.azure/autorest.python@~3.0.56 --python --python-mode=update --multiapi --python-sdks-folder=${joinPath(baseWorkingFolderPath, "1/1")} https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md`,
@@ -281,7 +472,7 @@ describe("SwaggerToSDK", function () {
           assert.strictEqual(await javaScriptLogsBlob.exists(), true);
           assert.strictEqual(await javaScriptLogsBlob.getContentType(), "text/plain");
           const javaScriptLogs: string[] = getLines(await javaScriptLogsBlob.getContentsAsString());
-          const javaScriptPackageUrl: URLBuilder = URLBuilder.parse(blobStorage.getBlobURL("abc7/Azure/azure-rest-api-specs/4994/1/Azure/azure-sdk-for-js/azure-arm-mysql-3.2.0.tgz"));
+          const javaScriptPackageUrl: URLBuilder = URLBuilder.parse(blobStorage.getBlobURL(`abc7/${pullRequestRepository}/4994/1/Azure/azure-sdk-for-js/azure-arm-mysql-3.2.0.tgz`));
           javaScriptPackageUrl.setQuery(undefined);
           assertEx.containsAll(javaScriptLogs, [
             `The following files were modified:`,
@@ -326,7 +517,7 @@ describe("SwaggerToSDK", function () {
           const nodeLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob("Azure/azure-sdk-for-node/logs.txt");
           assert.strictEqual(await nodeLogsBlob.exists(), true);
           assert.strictEqual(await nodeLogsBlob.getContentType(), "text/plain");
-          const nodePackageUrl: URLBuilder = URLBuilder.parse(blobStorage.getBlobURL("abc7/Azure/azure-rest-api-specs/4994/1/Azure/azure-sdk-for-node/azure-arm-mysql-3.2.0.tgz"));
+          const nodePackageUrl: URLBuilder = URLBuilder.parse(blobStorage.getBlobURL(`abc7/${pullRequestRepository}/4994/1/Azure/azure-sdk-for-node/azure-arm-mysql-3.2.0.tgz`));
           nodePackageUrl.setQuery(undefined);
           const nodeLogs: string[] = getLines(await nodeLogsBlob.getContentsAsString());
           assertEx.containsAll(nodeLogs, [
@@ -354,6 +545,16 @@ describe("SwaggerToSDK", function () {
 
           assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-js/azure-arm-mysql-3.2.0.tgz"), true);
           assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-node/azure-arm-mysql-3.2.0.tgz"), true);
+
+          const generationBlob: BlobStorageBlob = generationInstancePrefix.getBlob("generation.json");
+          assert.strictEqual(await generationBlob.exists(), true);
+          const generation: Generation = JSON.parse((await generationBlob.getContentsAsString())!);
+          const commentId: number = generation.commentId;
+          const githubComment: GitHubComment = first(await github.getPullRequestComments(pullRequestRepository, pullRequestNumber),
+            (comment: GitHubComment) => comment.id === commentId)!;
+          assertEx.defined(githubComment, "githubComment");
+          assert.strictEqual(githubComment.id, commentId);
+          assertEx.contains(githubComment.body, `<h1>Generation Progress</h1>`);
         } finally {
           if (deleteContainer) {
             await workingPrefix.getContainer().delete();
@@ -554,4 +755,13 @@ modified:   mysql/resource-manager/v2017_12_01/src/main/java/com/microsoft/azure
     runner = fakeRunner;
   }
   return runner;
+}
+
+async function createEndToEndGitHub(): Promise<FakeGitHub> {
+  const result = new FakeGitHub();
+  await result.createUser("fake_user");
+  await result.setCurrentUser("fake_user");
+  await result.createFakeRepository(pullRequestRepository);
+  await result.createPullRequest(pullRequestRepository, pullRequest);
+  return result;
 }
