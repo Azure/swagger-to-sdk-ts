@@ -1,7 +1,11 @@
-import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, createFolder, deleteFolder, FakeCompressor, FakeGitHub, FakeRunner, first, folderExistsSync, getInMemoryLogger, getName, getParentFolderPath, getRootPath, GitHub, GitHubComment, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealGitHub, RealRunner, Runner, URLBuilder, writeFileContents } from "@ts-common/azure-js-dev-tools";
+import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, createFolder, deleteFolder, FakeCompressor, FakeGitHub, FakeRunner, first, folderExistsSync, getInMemoryLogger, getName, getParentFolderPath, getRootPath, GitHub, GitHubComment, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealRunner, Runner, URLBuilder, writeFileContents } from "@ts-common/azure-js-dev-tools";
 import { getLines } from "@ts-common/azure-js-dev-tools/dist/lib/common";
 import { assert } from "chai";
 import { createGenerationInstance, createTempFolder, csharp, Generation, generationStatus, getAllLanguages, getCompressedRepositoryFileName, getCompressorCreator, getGenerationHTML, getGenerationInstancePrefix, getGitHub, getLanguageForRepository, getLogsBlob, getPullRequestPrefix, getRepositoryFolderPath, getSupportedLanguages, getWorkingFolderPath, go, LanguageConfiguration, logChangedFiles, pullRequestChange, python, ruby, SwaggerToSDKConfiguration } from "../lib/swaggerToSDK";
+
+const deleteContainer = true;
+const real = false;
+const realStorageUrl = `https://autosdkstorage.blob.core.windows.net/?sv=2018-03-28&ss=bfqt&srt=sco&sp=rwdlacup&se=2019-02-12T01:08:02Z&st=2019-02-11T17:08:02Z&spr=https&sig=nxdIOS3%2F2orEyfrn5fBzkrJndV2r2Cr0eS8KPTL%2BEn8%3D`;
 
 const baseCommit: GitHubCommit = {
   label: "Azure:master",
@@ -28,7 +32,7 @@ const pullRequest: GitHubPullRequest = {
   id: pullRequestId,
   labels: [],
   number: pullRequestNumber,
-  state: "open",
+  state: "closed",
   title: pullRequestTitle,
   url: `https://api.github.com/repos/${pullRequestRepository}/pulls/${pullRequestNumber}`,
   html_url: `https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}`,
@@ -363,17 +367,17 @@ describe("swaggerToSDK.ts", function () {
   });
 
   it("getPullRequest()", async function () {
-    const github = new RealGitHub();
+    const github: GitHub = await createEndToEndGitHub();
     const pullRequest: GitHubPullRequest = await github.getPullRequest(pullRequestRepository, pullRequestNumber);
     assert(pullRequest);
     assert(pullRequest.base);
-    assert.strictEqual(pullRequest.base.label, "Azure:master");
-    assert.strictEqual(pullRequest.base.ref, "master");
-    assert.strictEqual(pullRequest.base.sha, "a4368ac83299657f35f105033353c2133db89176");
+    assert.strictEqual(pullRequest.base.label, baseCommit.label);
+    assert.strictEqual(pullRequest.base.ref, baseCommit.ref);
+    assert.strictEqual(pullRequest.base.sha, baseCommit.sha);
     assert(pullRequest.head);
-    assert.strictEqual(pullRequest.head.label, "zikalino:fix-mysql");
-    assert.strictEqual(pullRequest.head.ref, "fix-mysql");
-    assert.strictEqual(pullRequest.head.sha, "a1d4df17cd05dd014bdc838e9304d393b414df2f");
+    assert.strictEqual(pullRequest.head.label, headCommit.label);
+    assert.strictEqual(pullRequest.head.ref, headCommit.ref);
+    assert.strictEqual(pullRequest.head.sha, headCommit.sha);
     assert.strictEqual(pullRequest.merge_commit_sha, pullRequestMergeCommitSha);
     assert.strictEqual(pullRequest.id, pullRequestId);
     assert.strictEqual(pullRequest.number, pullRequestNumber);
@@ -639,10 +643,6 @@ describe("swaggerToSDK.ts", function () {
       it("end-to-end", async function () {
         this.timeout(600000);
 
-        const deleteContainer = true;
-        const real = false;
-        const realStorageUrl = `https://autosdkstorage.blob.core.windows.net/?sv=2018-03-28&ss=bfqt&srt=sco&sp=rwdlacup&se=2019-02-12T01:08:02Z&st=2019-02-11T17:08:02Z&spr=https&sig=nxdIOS3%2F2orEyfrn5fBzkrJndV2r2Cr0eS8KPTL%2BEn8%3D`;
-
         const blobStorage: BlobStorage = createEndToEndBlobStorage(real, realStorageUrl);
         const workingPrefix: BlobStoragePrefix = getWorkingPrefix(blobStorage);
         try {
@@ -690,7 +690,6 @@ describe("swaggerToSDK.ts", function () {
           const expectedLogs: string[] = [
             `Received pull request change webhook request from GitHub for "https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}".`,
             `diff_url response status code is 200.`,
-            `diff_url response body contains 189 lines.`,
             `diff_url response body contains 5 "diff --git" lines.`,
             `diff_url response body contains 5 changed files:`,
             `specification/mysql/resource-manager/Microsoft.DBforMySQL/preview/2017-12-01-preview/examples/ServerCreate.json`,
@@ -856,8 +855,139 @@ function createEndToEndCompressorCreator(real?: boolean): () => Compressor {
     : () => new FakeCompressor();
 }
 
-function createEndToEndHttpClient(): HttpClient {
-  return new NodeHttpClient();
+function createEndToEndHttpClient(real?: boolean): HttpClient {
+  return real
+    ? new NodeHttpClient()
+    : {
+      sendRequest(request: HttpRequest): Promise<HttpResponse> {
+        const requestPath: string | undefined = URLBuilder.parse(request.url.toString()).getPath();
+        let body: string | undefined;
+        switch (requestPath) {
+          case URLBuilder.parse(pullRequest.diff_url).getPath()!:
+            body = `
+diff --git a/specification/mysql/resource-manager/Microsoft.DBforMySQL/preview/2017-12-01-preview/examples/ServerCreate.json b/specification/mysql/resource-manager/Microsoft.DBforMySQL/preview/2017-12-01-preview/examples/ServerCreate.json
+diff --git a/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreate.json b/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreate.json
+diff --git a/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreateGeoRestoreMode.json b/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreateGeoRestoreMode.json
+diff --git a/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreatePointInTimeRestore.json b/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreatePointInTimeRestore.json
+diff --git a/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreateReplicaMode.json b/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreateReplicaMode.json
+`;
+            break;
+
+          case "/azure/azure-rest-api-specs/5d204450e3ea6709a034208af441ebaaa87bd805/specification/mysql/resource-manager/readme.md":
+            body = `
+\`\`\`yaml $(swagger-to-sdk)
+swagger-to-sdk:
+  - repo: azure-sdk-for-python
+  - repo: azure-sdk-for-java
+  - repo: azure-sdk-for-go
+  - repo: azure-sdk-for-js
+  - repo: azure-sdk-for-node
+\`\`\`
+`;
+            break;
+
+          case "/Azure/azure-sdk-for-js":
+          case "/Azure/azure-sdk-for-python":
+          case "/Azure/azure-sdk-for-go":
+          case "/Azure/azure-sdk-for-java":
+          case "/Azure/azure-sdk-for-node":
+            body = "";
+            break;
+
+          case "/Azure/azure-sdk-for-js/master/swagger_to_sdk_config.json":
+            const jsSwaggerToSDKConfiguration: SwaggerToSDKConfiguration = {
+              "meta": {
+                "autorest_options": {
+                  "typescript": "",
+                  "license-header": "MICROSOFT_MIT_NO_VERSION",
+                  "sdkrel:typescript-sdks-folder": ".",
+                  "use": "@microsoft.azure/autorest.typescript@2.1.1"
+                },
+                "advanced_options": {
+                  "clone_dir": "azure-sdk-for-js"
+                }
+              }
+            };
+            body = JSON.stringify(jsSwaggerToSDKConfiguration);
+            break;
+
+          case "/Azure/azure-sdk-for-python/master/swagger_to_sdk_config.json":
+            const pythonSwaggerToSDKConfiguration: SwaggerToSDKConfiguration = {
+              meta: {
+                autorest_options: {
+                  "version": "preview",
+                  "use": "@microsoft.azure/autorest.python@~3.0.56",
+                  "python": "",
+                  "python-mode": "update",
+                  "multiapi": "",
+                  "sdkrel:python-sdks-folder": "."
+                }
+              }
+            };
+            body = JSON.stringify(pythonSwaggerToSDKConfiguration);
+            break;
+
+          case "/Azure/azure-sdk-for-go/master/swagger_to_sdk_config.json":
+            const goSwaggerToSDKConfiguration: SwaggerToSDKConfiguration = {
+              meta: {
+                "autorest_options": {
+                  "use": "@microsoft.azure/autorest.go@~2.1.127",
+                  "go": "",
+                  "verbose": "",
+                  "multiapi": "",
+                  "use-onever": "",
+                  "preview-chk": "",
+                  "sdkrel:go-sdk-folder": "."
+                },
+                advanced_options: {
+                  clone_dir: "src/github.com/Azure/azure-sdk-for-go"
+                }
+              }
+            };
+            body = JSON.stringify(goSwaggerToSDKConfiguration);
+            break;
+
+          case "/Azure/azure-sdk-for-java/master/swagger_to_sdk_config.json":
+            const javaSwaggerToSDKConfiguration: SwaggerToSDKConfiguration = {
+              "meta": {
+                "autorest_options": {
+                  "java": "",
+                  "verbose": "",
+                  "multiapi": "",
+                  "sdkrel:azure-libraries-for-java-folder": ".",
+                  "use": "@microsoft.azure/autorest.java@2.1.85",
+                }
+              }
+            };
+            body = JSON.stringify(javaSwaggerToSDKConfiguration);
+            break;
+
+          case "/Azure/azure-sdk-for-node/master/swagger_to_sdk_config.json":
+            const nodeSwaggerToSDKConfiguration: SwaggerToSDKConfiguration = {
+              "meta": {
+                "autorest_options": {
+                  "nodejs": "",
+                  "license-header": "MICROSOFT_MIT_NO_VERSION",
+                  "use": "@microsoft.azure/autorest.nodejs@2.2.131",
+                  "sdkrel:node-sdks-folder": "."
+                },
+                "advanced_options": {
+                  "clone_dir": "azure-sdk-for-node"
+                }
+              }
+            };
+            body = JSON.stringify(nodeSwaggerToSDKConfiguration);
+            break;
+        }
+
+        return Promise.resolve({
+          request,
+          statusCode: body != undefined ? 200 : 404,
+          headers: new HttpHeaders(),
+          body
+        });
+      }
+    };
 }
 
 interface CreateEndToEndRunnerOptions {
