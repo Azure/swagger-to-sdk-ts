@@ -1,11 +1,11 @@
-import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, createFolder, deleteFolder, FakeCompressor, FakeGitHub, FakeRunner, first, folderExistsSync, getInMemoryLogger, getName, getParentFolderPath, getRootPath, GitHub, GitHubComment, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealRunner, Runner, URLBuilder, writeFileContents } from "@ts-common/azure-js-dev-tools";
+import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, createFolder, deleteFolder, FakeCompressor, FakeGitHub, FakeRunner, first, folderExistsSync, getInMemoryLogger, getName, getParentFolderPath, getRootPath, GitHub, GitHubComment, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealRunner, Runner, URLBuilder, writeFileContents, getGitHubRepository } from "@ts-common/azure-js-dev-tools";
 import { getLines } from "@ts-common/azure-js-dev-tools/dist/lib/common";
 import { assert } from "chai";
-import { createGenerationInstance, createTempFolder, csharp, Generation, generationStatus, getAllLanguages, getCompressedRepositoryFileName, getCompressorCreator, getGenerationHTML, getGenerationInstancePrefix, getGitHub, getLanguageForRepository, getLogsBlob, getPullRequestPrefix, getRepositoryFolderPath, getSupportedLanguages, getWorkingFolderPath, go, LanguageConfiguration, logChangedFiles, pullRequestChange, python, ruby, SwaggerToSDKConfiguration } from "../lib/swaggerToSDK";
+import { createGenerationInstance, createTempFolder, csharp, GenerationData, generationStatus, getAllLanguages, getCompressedRepositoryFileName, getCompressorCreator, getGenerationDataHTMLLines, getGenerationInstancePrefix, getGitHub, getLanguageForRepository, getLogsBlob, getPullRequestPrefix, getRepositoryFolderPath, getSupportedLanguages, getWorkingFolderPath, go, LanguageConfiguration, logChangedFiles, pullRequestChange, python, ruby, SwaggerToSDKConfiguration, getPullRequestRepository } from "../lib/swaggerToSDK";
 
 const deleteContainer = true;
 const real = false;
-const realStorageUrl = `https://autosdkstorage.blob.core.windows.net/?sv=2018-03-28&ss=bfqt&srt=sco&sp=rwdlacup&se=2019-02-12T01:08:02Z&st=2019-02-11T17:08:02Z&spr=https&sig=nxdIOS3%2F2orEyfrn5fBzkrJndV2r2Cr0eS8KPTL%2BEn8%3D`;
+const realStorageUrl = `https://autosdkstorage.blob.core.windows.net/`;
 
 const baseCommit: GitHubCommit = {
   label: "Azure:master",
@@ -390,7 +390,7 @@ describe("swaggerToSDK.ts", function () {
 
   describe("getSpecPRStatusHTML()", function () {
     it("with no arguments", function () {
-      assert.deepEqual(getGenerationHTML(), [
+      assert.deepEqual(getGenerationDataHTMLLines(), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -400,7 +400,7 @@ describe("swaggerToSDK.ts", function () {
     });
 
     it("with undefined specPRComment", function () {
-      assert.deepEqual(getGenerationHTML(undefined), [
+      assert.deepEqual(getGenerationDataHTMLLines(undefined), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -410,14 +410,19 @@ describe("swaggerToSDK.ts", function () {
     });
 
     it("with commentId", function () {
-      const generation: Generation = {
-        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
-        pullRequestNumber: 60,
+      const generation: GenerationData = {
+        pullRequest: {
+          repository: getGitHubRepository(pullRequestRepository),
+          number: pullRequestNumber,
+          htmlUrl: pullRequest.html_url,
+          diffUrl: pullRequest.diff_url,
+          mergeCommit: pullRequestMergeCommitSha,
+        },
         commentId: 50,
         logsBlobUrl: "fake_logs_blob_url",
         repositories: {}
       };
-      assert.deepEqual(getGenerationHTML(generation), [
+      assert.deepEqual(getGenerationDataHTMLLines(generation), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -428,14 +433,19 @@ describe("swaggerToSDK.ts", function () {
     });
 
     it("with empty repositories array", function () {
-      const generation: Generation = {
-        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
-        pullRequestNumber: 60,
+      const generation: GenerationData = {
+        pullRequest: {
+          repository: getGitHubRepository(pullRequestRepository),
+          number: pullRequestNumber,
+          htmlUrl: pullRequest.html_url,
+          diffUrl: pullRequest.diff_url,
+          mergeCommit: pullRequestMergeCommitSha,
+        },
         commentId: 50,
         logsBlobUrl: "fake_logs_blob_url",
         repositories: {}
       };
-      assert.deepEqual(getGenerationHTML(generation), [
+      assert.deepEqual(getGenerationDataHTMLLines(generation), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -446,9 +456,14 @@ describe("swaggerToSDK.ts", function () {
     });
 
     it("with one successful repository", function () {
-      const generation: Generation = {
-        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
-        pullRequestNumber: 60,
+      const generation: GenerationData = {
+        pullRequest: {
+          repository: getGitHubRepository(pullRequestRepository),
+          number: pullRequestNumber,
+          htmlUrl: pullRequest.html_url,
+          diffUrl: pullRequest.diff_url,
+          mergeCommit: pullRequestMergeCommitSha,
+        },
         commentId: 50,
         logsBlobUrl: "fake_logs_blob_url",
         repositories: {
@@ -458,7 +473,7 @@ describe("swaggerToSDK.ts", function () {
           }
         }
       };
-      assert.deepEqual(getGenerationHTML(generation), [
+      assert.deepEqual(getGenerationDataHTMLLines(generation), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -475,9 +490,14 @@ describe("swaggerToSDK.ts", function () {
     });
 
     it("with one failed repository", function () {
-      const generation: Generation = {
-        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
-        pullRequestNumber: 60,
+      const generation: GenerationData = {
+        pullRequest: {
+          repository: getGitHubRepository(pullRequestRepository),
+          number: pullRequestNumber,
+          htmlUrl: pullRequest.html_url,
+          diffUrl: pullRequest.diff_url,
+          mergeCommit: pullRequestMergeCommitSha,
+        },
         commentId: 50,
         logsBlobUrl: "fake_logs_blob_url",
         repositories: {
@@ -487,7 +507,7 @@ describe("swaggerToSDK.ts", function () {
           }
         }
       };
-      assert.deepEqual(getGenerationHTML(generation), [
+      assert.deepEqual(getGenerationDataHTMLLines(generation), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -504,9 +524,14 @@ describe("swaggerToSDK.ts", function () {
     });
 
     it("with one in-progress repository", function () {
-      const generation: Generation = {
-        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
-        pullRequestNumber: 60,
+      const generation: GenerationData = {
+        pullRequest: {
+          repository: getGitHubRepository(pullRequestRepository),
+          number: pullRequestNumber,
+          htmlUrl: pullRequest.html_url,
+          diffUrl: pullRequest.diff_url,
+          mergeCommit: pullRequestMergeCommitSha,
+        },
         commentId: 50,
         logsBlobUrl: "fake_logs_blob_url",
         repositories: {
@@ -516,7 +541,7 @@ describe("swaggerToSDK.ts", function () {
           }
         }
       };
-      assert.deepEqual(getGenerationHTML(generation), [
+      assert.deepEqual(getGenerationDataHTMLLines(generation), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -533,9 +558,14 @@ describe("swaggerToSDK.ts", function () {
     });
 
     it("with one pending repository", function () {
-      const generation: Generation = {
-        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
-        pullRequestNumber: 60,
+      const generation: GenerationData = {
+        pullRequest: {
+          repository: getGitHubRepository(pullRequestRepository),
+          number: pullRequestNumber,
+          htmlUrl: pullRequest.html_url,
+          diffUrl: pullRequest.diff_url,
+          mergeCommit: pullRequestMergeCommitSha,
+        },
         commentId: 50,
         logsBlobUrl: "fake_logs_blob_url",
         repositories: {
@@ -545,7 +575,7 @@ describe("swaggerToSDK.ts", function () {
           }
         }
       };
-      assert.deepEqual(getGenerationHTML(generation), [
+      assert.deepEqual(getGenerationDataHTMLLines(generation), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -559,6 +589,24 @@ describe("swaggerToSDK.ts", function () {
         `</body>`,
         `</html>`
       ]);
+    });
+  });
+
+  describe("getPullRequestRepository()", function () {
+    it("with non-URL", function () {
+      assert.strictEqual(getPullRequestRepository("apples and bananas"), undefined);
+    });
+
+    it("with non-GitHub URL", function () {
+      assert.strictEqual(getPullRequestRepository("https://www.bing.com"), undefined);
+    });
+
+    it("with non-GitHub Pull Request URL", function () {
+      assert.strictEqual(getPullRequestRepository(`https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}`), undefined);
+    });
+
+    it("with GitHub Pull Request URL", function () {
+      assert.deepEqual(getPullRequestRepository(`https://api.github.com/repos/${pullRequestRepository}/pulls/${pullRequestNumber}`), getGitHubRepository(pullRequestRepository));
     });
   });
 
@@ -826,8 +874,8 @@ describe("swaggerToSDK.ts", function () {
 
           const generationBlob: BlobStorageBlob = generationInstancePrefix.getBlob("generation.json");
           assert.strictEqual(await generationBlob.exists(), true);
-          const generation: Generation = JSON.parse((await generationBlob.getContentsAsString())!);
-          const commentId: number = generation.commentId;
+          const generation: GenerationData = JSON.parse((await generationBlob.getContentsAsString())!);
+          const commentId: number = generation.commentId!;
           const githubComment: GitHubComment = first(await github.getPullRequestComments(pullRequestRepository, pullRequestNumber),
             (comment: GitHubComment) => comment.id === commentId)!;
           assertEx.defined(githubComment, "githubComment");
