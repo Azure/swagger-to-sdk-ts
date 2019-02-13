@@ -1,7 +1,7 @@
 import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, createFolder, deleteFolder, FakeCompressor, FakeGitHub, FakeRunner, first, folderExistsSync, getInMemoryLogger, getName, getParentFolderPath, getRootPath, GitHub, GitHubComment, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealRunner, Runner, URLBuilder, writeFileContents, getGitHubRepository } from "@ts-common/azure-js-dev-tools";
 import { getLines } from "@ts-common/azure-js-dev-tools/dist/lib/common";
 import { assert } from "chai";
-import { createGenerationInstance, createTempFolder, csharp, GenerationData, generationStatus, getAllLanguages, getCompressedRepositoryFileName, getCompressorCreator, getGenerationDataHTMLLines, getGenerationInstancePrefix, getGitHub, getLanguageForRepository, getLogsBlob, getPullRequestPrefix, getRepositoryFolderPath, getSupportedLanguages, getWorkingFolderPath, go, LanguageConfiguration, logChangedFiles, pullRequestChange, python, ruby, SwaggerToSDKConfiguration, getPullRequestRepository } from "../lib/swaggerToSDK";
+import { createGenerationIteration, createTempFolder, csharp, GenerationData, generationStatus, getAllLanguages, getCompressedRepositoryFileName, getCompressorCreator, getGenerationDataHTMLLines, getGenerationIterationPrefix, getGitHub, getLanguageForRepository, getLogsBlob, getPullRequestPrefix, getRepositoryFolderPath, getSupportedLanguages, getWorkingFolderPath, go, LanguageConfiguration, logChangedFiles, pullRequestChange, python, ruby, SwaggerToSDKConfiguration, getPullRequestRepository } from "../lib/swaggerToSDK";
 
 const deleteContainer = true;
 const real = false;
@@ -276,7 +276,7 @@ describe("swaggerToSDK.ts", function () {
     const blobStorage = new InMemoryBlobStorage();
     const workingPrefix: BlobStoragePrefix = blobStorage.getPrefix("apples/bananas/");
     const pullRequestPrefix: BlobStoragePrefix = getPullRequestPrefix(workingPrefix, "Azure/azure-sdk-for-ruby", 5837);
-    const generationInstancePrefid: BlobStoragePrefix = getGenerationInstancePrefix(pullRequestPrefix, 2);
+    const generationInstancePrefid: BlobStoragePrefix = getGenerationIterationPrefix(pullRequestPrefix, 2);
     assert.strictEqual(generationInstancePrefid.storage, blobStorage);
     assert.deepEqual(generationInstancePrefid.path.toString(), "apples/bananas/Azure/azure-sdk-for-ruby/5837/2/");
   });
@@ -285,7 +285,7 @@ describe("swaggerToSDK.ts", function () {
     it("when container doesn't exist", async function () {
       const blobStorage = new InMemoryBlobStorage();
       const prefix: BlobStoragePrefix = blobStorage.getPrefix("apples/bananas/");
-      const generationInstance: number = await createGenerationInstance(prefix);
+      const generationInstance: number = await createGenerationIteration(prefix);
       assert.strictEqual(generationInstance, 1);
       assert.strictEqual(await blobStorage.containerExists("apples"), true);
       assert.strictEqual(await blobStorage.blobExists(`apples/bananas/1/logs.txt`), true);
@@ -295,7 +295,7 @@ describe("swaggerToSDK.ts", function () {
       const blobStorage = new InMemoryBlobStorage();
       await blobStorage.createContainer("apples");
       const pullRequestPrefix: BlobStoragePrefix = blobStorage.getPrefix("apples/bananas/");
-      const generationInstance: number = await createGenerationInstance(pullRequestPrefix);
+      const generationInstance: number = await createGenerationIteration(pullRequestPrefix);
       assert.strictEqual(generationInstance, 1);
       assert.strictEqual(await blobStorage.containerExists("apples"), true);
       assert.strictEqual(await blobStorage.blobExists(`apples/bananas/1/logs.txt`), true);
@@ -306,7 +306,7 @@ describe("swaggerToSDK.ts", function () {
       await blobStorage.createContainer("apples");
       await blobStorage.createBlob("apples/bananas/1/logs.txt");
       const pullRequestPrefix: BlobStoragePrefix = blobStorage.getPrefix("apples/bananas/");
-      const generationInstance: number = await createGenerationInstance(pullRequestPrefix);
+      const generationInstance: number = await createGenerationIteration(pullRequestPrefix);
       assert.strictEqual(generationInstance, 2);
       assert.strictEqual(await blobStorage.containerExists("apples"), true);
       assert.strictEqual(await blobStorage.blobExists(`apples/bananas/2/logs.txt`), true);
@@ -641,7 +641,7 @@ describe("swaggerToSDK.ts", function () {
 
         assert.deepEqual(logger.allLogs, [
           `Received pull request change webhook request from GitHub for "https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}".`,
-          `Getting generation state from https://fake.storage.com/abc1/${pullRequestRepository}/4994/0/generation.json...`,
+          `Getting generation state from https://fake.storage.com/abc1/${pullRequestRepository}/4994/0/generationData.json...`,
           `Getting diff_url (https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}.diff) contents...`,
           `diff_url response status code is 404.`,
           `Deleting working folder ${rootPath}/1...`,
@@ -679,7 +679,7 @@ describe("swaggerToSDK.ts", function () {
 
         assert.deepEqual(logger.allLogs, [
           `Received pull request change webhook request from GitHub for "https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}".`,
-          `Getting generation state from https://fake.storage.com/abc2/${pullRequestRepository}/4994/0/generation.json...`,
+          `Getting generation state from https://fake.storage.com/abc2/${pullRequestRepository}/4994/0/generationData.json...`,
           `Getting diff_url (https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}.diff) contents...`,
           `diff_url response status code is 200.`,
           `diff_url response body is empty.`,
@@ -753,7 +753,7 @@ describe("swaggerToSDK.ts", function () {
             `specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreateReplicaMode.json`,
             `Found 1 readme.md files to generate:`,
             `specification/mysql/resource-manager/readme.md`,
-            `Looking for languages to generate in "specification/mysql/resource-manager/readme.md"...`,
+            `Looking for repositories to generate in "specification/mysql/resource-manager/readme.md"...`,
             `Getting file contents for "https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md"...`,
             `Merged readme.md response status code is 200.`,
             `Found 5 requested SDK repositories:`,
@@ -872,7 +872,7 @@ describe("swaggerToSDK.ts", function () {
           assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-js/azure-arm-mysql-3.2.0.tgz"), true);
           assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-node/azure-arm-mysql-3.2.0.tgz"), true);
 
-          const generationBlob: BlobStorageBlob = generationInstancePrefix.getBlob("generation.json");
+          const generationBlob: BlobStorageBlob = generationInstancePrefix.getBlob("generationData.json");
           assert.strictEqual(await generationBlob.exists(), true);
           const generation: GenerationData = JSON.parse((await generationBlob.getContentsAsString())!);
           const commentId: number = generation.commentId!;
