@@ -117,18 +117,6 @@ describe("swaggerToSDK.ts", function () {
       }
     });
 
-    it("with absolute path with root that doesn't exist", async function () {
-      const workingFolderPath: string = await getWorkingFolderPath("myfakeroot:/folder/");
-      try {
-        assertEx.defined(workingFolderPath, "workingFolderPath");
-        assert.strictEqual(folderExistsSync(workingFolderPath), true);
-        assert.strictEqual(getName(workingFolderPath), "1");
-        assert.strictEqual(getParentFolderPath(workingFolderPath), normalize(process.cwd()));
-      } finally {
-        deleteFolder(workingFolderPath);
-      }
-    });
-
     it("with existing working folder path", async function () {
       const relativeBaseWorkingFolderPath = "my";
       const rootedBaseWorkingFolderPath: string = joinPath(process.cwd(), relativeBaseWorkingFolderPath);
