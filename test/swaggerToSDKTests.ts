@@ -1,7 +1,11 @@
-import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, createFolder, deleteFolder, FakeCompressor, FakeGitHub, FakeRunner, first, getInMemoryLogger, getParentFolderPath, getRootPath, GitHubComment, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealGitHub, RealRunner, Runner, URLBuilder, writeFileContents } from "@ts-common/azure-js-dev-tools";
+import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, createFolder, deleteFolder, FakeCompressor, FakeGitHub, FakeRunner, first, folderExistsSync, getInMemoryLogger, getName, getParentFolderPath, getRootPath, GitHub, GitHubComment, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealRunner, Runner, URLBuilder, writeFileContents, getGitHubRepository } from "@ts-common/azure-js-dev-tools";
 import { getLines } from "@ts-common/azure-js-dev-tools/dist/lib/common";
 import { assert } from "chai";
-import { getGenerationHTML, getWorkingFolderPath, logsFileName, Generation, generationStatus, SwaggerToSDK } from "../lib/swaggerToSDK";
+import { createGenerationIteration, createTempFolder, csharp, GenerationData, generationStatus, getAllLanguages, getCompressedRepositoryFileName, getCompressorCreator, getGenerationDataHTMLLines, getGenerationIterationPrefix, getGitHub, getLanguageForRepository, getLogsBlob, getPullRequestPrefix, getRepositoryFolderPath, getSupportedLanguages, getWorkingFolderPath, go, LanguageConfiguration, logChangedFiles, pullRequestChange, python, ruby, SwaggerToSDKConfiguration, getPullRequestRepository } from "../lib/swaggerToSDK";
+
+const deleteContainer = true;
+const real = false;
+const realStorageUrl = `https://autosdkstorage.blob.core.windows.net/`;
 
 const baseCommit: GitHubCommit = {
   label: "Azure:master",
@@ -28,7 +32,7 @@ const pullRequest: GitHubPullRequest = {
   id: pullRequestId,
   labels: [],
   number: pullRequestNumber,
-  state: "open",
+  state: "closed",
   title: pullRequestTitle,
   url: `https://api.github.com/repos/${pullRequestRepository}/pulls/${pullRequestNumber}`,
   html_url: `https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}`,
@@ -42,19 +46,326 @@ function getWorkingPrefix(blobStorage: BlobStorage): BlobStoragePrefix {
   return blobStorage.getPrefix(new BlobPath(`abc${++testCount}`, ""));
 }
 
-describe("SwaggerToSDK", function () {
+describe("swaggerToSDK.ts", function () {
+  describe("createTempFolder()", function () {
+    it("when baseFolderPath doesn't exist", async function () {
+      const currentFolder: string = process.cwd();
+      const baseFolderPath: string = joinPath(currentFolder, "idontexist");
+      const tempFolderPath: string = await createTempFolder(baseFolderPath);
+      try {
+        assert.strictEqual(folderExistsSync(baseFolderPath), true);
+        assert.strictEqual(folderExistsSync(tempFolderPath), true);
+        assert.strictEqual(getName(tempFolderPath), "1");
+      } finally {
+        deleteFolder(baseFolderPath);
+      }
+    });
+
+    it("when baseFolderPath exists but is empty", async function () {
+      const currentFolder: string = process.cwd();
+      const baseFolderPath: string = joinPath(currentFolder, "iexistnow");
+      await createFolder(baseFolderPath);
+      const tempFolderPath: string = await createTempFolder(baseFolderPath);
+      try {
+        assert.strictEqual(folderExistsSync(baseFolderPath), true);
+        assert.strictEqual(folderExistsSync(tempFolderPath), true);
+        assert.strictEqual(getName(tempFolderPath), "1");
+      } finally {
+        deleteFolder(baseFolderPath);
+      }
+    });
+
+    it("when baseFolderPath exists and has a 1 folder in it", async function () {
+      const currentFolder: string = process.cwd();
+      const baseFolderPath: string = joinPath(currentFolder, "iexistnow");
+      await createFolder(joinPath(baseFolderPath, "1"));
+      const tempFolderPath: string = await createTempFolder(baseFolderPath);
+      try {
+        assert.strictEqual(folderExistsSync(baseFolderPath), true);
+        assert.strictEqual(folderExistsSync(tempFolderPath), true);
+        assert.strictEqual(getName(tempFolderPath), "2");
+      } finally {
+        deleteFolder(baseFolderPath);
+      }
+    });
+  });
+
+  describe("getWorkingFolderPath()", function () {
+    it("with undefined", async function () {
+      const workingFolderPath: string = await getWorkingFolderPath(undefined);
+      try {
+        assertEx.defined(workingFolderPath, "workingFolderPath");
+        assert.strictEqual(folderExistsSync(workingFolderPath), true);
+        assert.strictEqual(getName(workingFolderPath), "1");
+        assert.strictEqual(getParentFolderPath(workingFolderPath), normalize(process.cwd()));
+      } finally {
+        deleteFolder(workingFolderPath);
+      }
+    });
+
+    it("with relative path", async function () {
+      const relativeBaseWorkingFolderPath = "my";
+      const rootedBaseWorkingFolderPath: string = joinPath(process.cwd(), relativeBaseWorkingFolderPath);
+      const workingFolderPath: string = await getWorkingFolderPath(relativeBaseWorkingFolderPath);
+      try {
+        assertEx.defined(workingFolderPath, "workingFolderPath");
+        assert.strictEqual(folderExistsSync(workingFolderPath), true);
+        assert.strictEqual(getName(workingFolderPath), "1");
+        assert.strictEqual(getParentFolderPath(workingFolderPath), rootedBaseWorkingFolderPath);
+      } finally {
+        deleteFolder(rootedBaseWorkingFolderPath);
+      }
+    });
+
+    it("with existing working folder path", async function () {
+      const relativeBaseWorkingFolderPath = "my";
+      const rootedBaseWorkingFolderPath: string = joinPath(process.cwd(), relativeBaseWorkingFolderPath);
+      await getWorkingFolderPath(relativeBaseWorkingFolderPath);
+      const workingFolderPath: string = await getWorkingFolderPath(relativeBaseWorkingFolderPath);
+      try {
+        assertEx.defined(workingFolderPath, "workingFolderPath");
+        assert.strictEqual(folderExistsSync(workingFolderPath), true);
+        assert.strictEqual(getName(workingFolderPath), "2");
+        assert.strictEqual(getParentFolderPath(workingFolderPath), rootedBaseWorkingFolderPath);
+      } finally {
+        deleteFolder(rootedBaseWorkingFolderPath);
+      }
+    });
+  });
+
+  describe("getRepositoryFolderPath()", function () {
+    it("with no meta property", function () {
+      const generationInstanceFolderPath = "generation/instance/folder/path";
+      const swaggerToSDKConfiguration: SwaggerToSDKConfiguration = {};
+      const repositoryNumber = 9;
+      assert.strictEqual(
+        getRepositoryFolderPath(generationInstanceFolderPath, swaggerToSDKConfiguration, repositoryNumber),
+        "generation/instance/folder/path/9");
+    });
+
+    it("with no advanced_options property", function () {
+      const generationInstanceFolderPath = "generation/instance/folder/path";
+      const swaggerToSDKConfiguration: SwaggerToSDKConfiguration = { meta: {} };
+      const repositoryNumber = 10;
+      assert.strictEqual(
+        getRepositoryFolderPath(generationInstanceFolderPath, swaggerToSDKConfiguration, repositoryNumber),
+        "generation/instance/folder/path/10");
+    });
+
+    it("with no clone_dir property", function () {
+      const generationInstanceFolderPath = "generation/instance/folder/path";
+      const swaggerToSDKConfiguration: SwaggerToSDKConfiguration = { meta: { advanced_options: {} } };
+      const repositoryNumber = 11;
+      assert.strictEqual(
+        getRepositoryFolderPath(generationInstanceFolderPath, swaggerToSDKConfiguration, repositoryNumber),
+        "generation/instance/folder/path/11");
+    });
+
+    it("with clone_dir property", function () {
+      const generationInstanceFolderPath = "generation/instance/folder/path";
+      const swaggerToSDKConfiguration: SwaggerToSDKConfiguration = { meta: { advanced_options: { clone_dir: "spam" } } };
+      const repositoryNumber = 12;
+      assert.strictEqual(
+        getRepositoryFolderPath(generationInstanceFolderPath, swaggerToSDKConfiguration, repositoryNumber),
+        "generation/instance/folder/path/spam");
+    });
+  });
+
+  describe("logChangedFiles()", function () {
+    it("with undefined changedFiles", async function () {
+      const logger: InMemoryLogger = getInMemoryLogger();
+      await logChangedFiles(undefined, logger, "spammed");
+      assert.deepEqual(logger.allLogs, []);
+    });
+
+    it("with empty changedFiles", async function () {
+      const logger: InMemoryLogger = getInMemoryLogger();
+      await logChangedFiles([], logger, "spammed");
+      assert.deepEqual(logger.allLogs, []);
+    });
+
+    it("with one value in changedFiles", async function () {
+      const logger: InMemoryLogger = getInMemoryLogger();
+      await logChangedFiles(["a"], logger, "spammed");
+      assert.deepEqual(logger.allLogs, [
+        `The following files were spammed:`,
+        `  a`
+      ]);
+    });
+
+    it("with multiple values in changedFiles", async function () {
+      const logger: InMemoryLogger = getInMemoryLogger();
+      await logChangedFiles(["a", "b", "c"], logger, "spammed");
+      assert.deepEqual(logger.allLogs, [
+        `The following files were spammed:`,
+        `  a`,
+        `  b`,
+        `  c`
+      ]);
+    });
+  });
+
+  describe("getSupportedLanguages()", function () {
+    it("with undefined", function () {
+      assert.deepEqual(getSupportedLanguages(undefined), getAllLanguages());
+    });
+
+    it("with empty array", function () {
+      const empty: LanguageConfiguration[] = [];
+      assert.strictEqual(getSupportedLanguages(empty), empty);
+    });
+
+    it("with non-empty array", function () {
+      const empty: LanguageConfiguration[] = [];
+      assert.strictEqual(getSupportedLanguages(empty), empty);
+    });
+
+    it("with function that doesn't do anything", function () {
+      assert.deepEqual(getSupportedLanguages(() => { }), getAllLanguages());
+    });
+
+    it("with function that modifies that default languages but doesn't return anything", function () {
+      const languages: LanguageConfiguration[] = getSupportedLanguages((defaultLanguages: LanguageConfiguration[]) => { defaultLanguages.push(csharp); });
+      assert.deepEqual(languages, [...getAllLanguages(), csharp]);
+    });
+
+    it("with function that modifies that default languages and then returns an array", function () {
+      const languages: LanguageConfiguration[] = getSupportedLanguages((defaultLanguages: LanguageConfiguration[]) => {
+        defaultLanguages.push(csharp);
+        return [ruby];
+      });
+      assert.deepEqual(languages, [ruby]);
+    });
+  });
+
+  describe("getCompressedRepositoryFileName()", function () {
+    it("with blah and spam", function () {
+      assert.strictEqual(getCompressedRepositoryFileName("blah", "spam"), "blah.spam");
+    });
+
+    it("with Azure/azure-sdk-for-js and zip", function () {
+      assert.strictEqual(getCompressedRepositoryFileName("Azure/azure-sdk-for-js", "zip"), "azure.azure-sdk-for-js.zip");
+    });
+
+    it("with AZURE/AZURE-SDK-FOR-GO and .tgz", function () {
+      assert.strictEqual(getCompressedRepositoryFileName("AZURE/AZURE-SDK-FOR-GO", ".tgz"), "azure.azure-sdk-for-go.tgz");
+    });
+  });
+
+  it("getPullRequestPrefix()", function () {
+    const blobStorage = new InMemoryBlobStorage();
+    const workingPrefix: BlobStoragePrefix = blobStorage.getPrefix("apples/bananas/");
+    const pullRequestPrefix: BlobStoragePrefix = getPullRequestPrefix(workingPrefix, "Azure/azure-sdk-for-ruby", 5837);
+    assert.strictEqual(pullRequestPrefix.storage, blobStorage);
+    assert.deepEqual(pullRequestPrefix.path.toString(), "apples/bananas/Azure/azure-sdk-for-ruby/5837/");
+  });
+
+  it("getGenerationInstancePrefix()", function () {
+    const blobStorage = new InMemoryBlobStorage();
+    const workingPrefix: BlobStoragePrefix = blobStorage.getPrefix("apples/bananas/");
+    const pullRequestPrefix: BlobStoragePrefix = getPullRequestPrefix(workingPrefix, "Azure/azure-sdk-for-ruby", 5837);
+    const generationInstancePrefid: BlobStoragePrefix = getGenerationIterationPrefix(pullRequestPrefix, 2);
+    assert.strictEqual(generationInstancePrefid.storage, blobStorage);
+    assert.deepEqual(generationInstancePrefid.path.toString(), "apples/bananas/Azure/azure-sdk-for-ruby/5837/2/");
+  });
+
+  describe("createGenerationInstance()", function () {
+    it("when container doesn't exist", async function () {
+      const blobStorage = new InMemoryBlobStorage();
+      const prefix: BlobStoragePrefix = blobStorage.getPrefix("apples/bananas/");
+      const generationInstance: number = await createGenerationIteration(prefix);
+      assert.strictEqual(generationInstance, 1);
+      assert.strictEqual(await blobStorage.containerExists("apples"), true);
+      assert.strictEqual(await blobStorage.blobExists(`apples/bananas/1/logs.txt`), true);
+    });
+
+    it("when no other pull request generation instances exist", async function () {
+      const blobStorage = new InMemoryBlobStorage();
+      await blobStorage.createContainer("apples");
+      const pullRequestPrefix: BlobStoragePrefix = blobStorage.getPrefix("apples/bananas/");
+      const generationInstance: number = await createGenerationIteration(pullRequestPrefix);
+      assert.strictEqual(generationInstance, 1);
+      assert.strictEqual(await blobStorage.containerExists("apples"), true);
+      assert.strictEqual(await blobStorage.blobExists(`apples/bananas/1/logs.txt`), true);
+    });
+
+    it("when another pull request generation instance exists", async function () {
+      const blobStorage = new InMemoryBlobStorage();
+      await blobStorage.createContainer("apples");
+      await blobStorage.createBlob("apples/bananas/1/logs.txt");
+      const pullRequestPrefix: BlobStoragePrefix = blobStorage.getPrefix("apples/bananas/");
+      const generationInstance: number = await createGenerationIteration(pullRequestPrefix);
+      assert.strictEqual(generationInstance, 2);
+      assert.strictEqual(await blobStorage.containerExists("apples"), true);
+      assert.strictEqual(await blobStorage.blobExists(`apples/bananas/2/logs.txt`), true);
+    });
+  });
+
+  describe("getLanguageForRepository()", function () {
+    it("with Azure/azure-sdk-for-python", function () {
+      assert.strictEqual(getLanguageForRepository("Azure/azure-sdk-for-python", getAllLanguages()), python);
+    });
+
+    it("with my-cool-python-project", function () {
+      assert.strictEqual(getLanguageForRepository("my-cool-python-project", getAllLanguages()), python);
+    });
+
+    it("with apples_and_bananas", function () {
+      assert.strictEqual(getLanguageForRepository("apples_and_bananas", getAllLanguages()), undefined);
+    });
+
+    it("with csharp-stuff", function () {
+      assert.strictEqual(getLanguageForRepository("csharp-stuff", getAllLanguages()), csharp);
+    });
+
+    it("with c#-crawler", function () {
+      assert.strictEqual(getLanguageForRepository("c#-crawler", getAllLanguages()), csharp);
+    });
+
+    it("with fun/with-go", function () {
+      assert.strictEqual(getLanguageForRepository("fun/with-go", getAllLanguages()), go);
+    });
+  });
+
+  describe("getGitHub()", function () {
+    it("with undefined", function () {
+      const github: GitHub = getGitHub(undefined);
+      assertEx.defined(github, "github");
+      assert(github instanceof FakeGitHub);
+    });
+
+    it("with defined", function () {
+      const fakeGitHub = new FakeGitHub();
+      assert.strictEqual(getGitHub(fakeGitHub), fakeGitHub);
+    });
+  });
+
+  describe("getCompressorCreator()", function () {
+    it("with undefined", function () {
+      const compressorCreator: (() => Compressor) = getCompressorCreator(undefined);
+      assertEx.defined(compressorCreator, "compressorCreator");
+      assert(compressorCreator() instanceof ArchiverCompressor);
+    });
+
+    it("with defined", function () {
+      const compressorCreator: (() => Compressor) = getCompressorCreator(() => new FakeCompressor());
+      assertEx.defined(compressorCreator, "compressorCreator");
+      assert(compressorCreator() instanceof FakeCompressor);
+    });
+  });
+
   it("getPullRequest()", async function () {
-    const github = new RealGitHub();
+    const github: GitHub = await createEndToEndGitHub();
     const pullRequest: GitHubPullRequest = await github.getPullRequest(pullRequestRepository, pullRequestNumber);
     assert(pullRequest);
     assert(pullRequest.base);
-    assert.strictEqual(pullRequest.base.label, "Azure:master");
-    assert.strictEqual(pullRequest.base.ref, "master");
-    assert.strictEqual(pullRequest.base.sha, "a4368ac83299657f35f105033353c2133db89176");
+    assert.strictEqual(pullRequest.base.label, baseCommit.label);
+    assert.strictEqual(pullRequest.base.ref, baseCommit.ref);
+    assert.strictEqual(pullRequest.base.sha, baseCommit.sha);
     assert(pullRequest.head);
-    assert.strictEqual(pullRequest.head.label, "zikalino:fix-mysql");
-    assert.strictEqual(pullRequest.head.ref, "fix-mysql");
-    assert.strictEqual(pullRequest.head.sha, "a1d4df17cd05dd014bdc838e9304d393b414df2f");
+    assert.strictEqual(pullRequest.head.label, headCommit.label);
+    assert.strictEqual(pullRequest.head.ref, headCommit.ref);
+    assert.strictEqual(pullRequest.head.sha, headCommit.sha);
     assert.strictEqual(pullRequest.merge_commit_sha, pullRequestMergeCommitSha);
     assert.strictEqual(pullRequest.id, pullRequestId);
     assert.strictEqual(pullRequest.number, pullRequestNumber);
@@ -65,49 +376,9 @@ describe("SwaggerToSDK", function () {
     assert.strictEqual(pullRequest.diff_url, `https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}.diff`);
   });
 
-  describe("constructor()", function () {
-    it("with no options", function () {
-      const blobStorage = new InMemoryBlobStorage();
-      const workingPrefix: BlobStoragePrefix = getWorkingPrefix(blobStorage);
-      const swaggerToSDK = new SwaggerToSDK(workingPrefix);
-      assert.strictEqual(swaggerToSDK.workingPrefix, workingPrefix);
-      assert.strictEqual(swaggerToSDK.logger, undefined);
-      assert(swaggerToSDK.httpClient instanceof NodeHttpClient);
-    });
-
-    it("with undefined options argument", function () {
-      const blobStorage = new InMemoryBlobStorage();
-      const workingPrefix: BlobStoragePrefix = getWorkingPrefix(blobStorage);
-      const swaggerToSDK = new SwaggerToSDK(workingPrefix, undefined);
-      assert.strictEqual(swaggerToSDK.workingPrefix, workingPrefix);
-      assert.strictEqual(swaggerToSDK.logger, undefined);
-      assert(swaggerToSDK.httpClient instanceof NodeHttpClient);
-    });
-
-    it("with telemetry argument", function () {
-      const blobStorage = new InMemoryBlobStorage();
-      const workingPrefix: BlobStoragePrefix = getWorkingPrefix(blobStorage);
-      const logger: InMemoryLogger = getInMemoryLogger();
-      const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger });
-      assert.strictEqual(swaggerToSDK.workingPrefix, workingPrefix);
-      assert.strictEqual(swaggerToSDK.logger, logger);
-      assert(swaggerToSDK.httpClient instanceof NodeHttpClient);
-    });
-
-    it("with httpClient argument", function () {
-      const blobStorage = new InMemoryBlobStorage();
-      const workingPrefix: BlobStoragePrefix = getWorkingPrefix(blobStorage);
-      const httpClient = new NodeHttpClient();
-      const swaggerToSDK = new SwaggerToSDK(workingPrefix, { httpClient });
-      assert.strictEqual(swaggerToSDK.workingPrefix, workingPrefix);
-      assert.strictEqual(swaggerToSDK.logger, undefined);
-      assert.strictEqual(swaggerToSDK.httpClient, httpClient);
-    });
-  });
-
   describe("getSpecPRStatusHTML()", function () {
     it("with no arguments", function () {
-      assert.deepEqual(getGenerationHTML(), [
+      assert.deepEqual(getGenerationDataHTMLLines(), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -117,7 +388,7 @@ describe("SwaggerToSDK", function () {
     });
 
     it("with undefined specPRComment", function () {
-      assert.deepEqual(getGenerationHTML(undefined), [
+      assert.deepEqual(getGenerationDataHTMLLines(undefined), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -127,14 +398,19 @@ describe("SwaggerToSDK", function () {
     });
 
     it("with commentId", function () {
-      const generation: Generation = {
-        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
-        pullRequestNumber: 60,
+      const generation: GenerationData = {
+        pullRequest: {
+          repository: getGitHubRepository(pullRequestRepository),
+          number: pullRequestNumber,
+          htmlUrl: pullRequest.html_url,
+          diffUrl: pullRequest.diff_url,
+          mergeCommit: pullRequestMergeCommitSha,
+        },
         commentId: 50,
         logsBlobUrl: "fake_logs_blob_url",
         repositories: {}
       };
-      assert.deepEqual(getGenerationHTML(generation), [
+      assert.deepEqual(getGenerationDataHTMLLines(generation), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -145,14 +421,19 @@ describe("SwaggerToSDK", function () {
     });
 
     it("with empty repositories array", function () {
-      const generation: Generation = {
-        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
-        pullRequestNumber: 60,
+      const generation: GenerationData = {
+        pullRequest: {
+          repository: getGitHubRepository(pullRequestRepository),
+          number: pullRequestNumber,
+          htmlUrl: pullRequest.html_url,
+          diffUrl: pullRequest.diff_url,
+          mergeCommit: pullRequestMergeCommitSha,
+        },
         commentId: 50,
         logsBlobUrl: "fake_logs_blob_url",
         repositories: {}
       };
-      assert.deepEqual(getGenerationHTML(generation), [
+      assert.deepEqual(getGenerationDataHTMLLines(generation), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -163,9 +444,14 @@ describe("SwaggerToSDK", function () {
     });
 
     it("with one successful repository", function () {
-      const generation: Generation = {
-        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
-        pullRequestNumber: 60,
+      const generation: GenerationData = {
+        pullRequest: {
+          repository: getGitHubRepository(pullRequestRepository),
+          number: pullRequestNumber,
+          htmlUrl: pullRequest.html_url,
+          diffUrl: pullRequest.diff_url,
+          mergeCommit: pullRequestMergeCommitSha,
+        },
         commentId: 50,
         logsBlobUrl: "fake_logs_blob_url",
         repositories: {
@@ -175,7 +461,7 @@ describe("SwaggerToSDK", function () {
           }
         }
       };
-      assert.deepEqual(getGenerationHTML(generation), [
+      assert.deepEqual(getGenerationDataHTMLLines(generation), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -184,9 +470,6 @@ describe("SwaggerToSDK", function () {
         `<tr>`,
         `<td><a href="https://github.com/Azure/azure-sdk-for-js">Azure/azure-sdk-for-js</a></td>`,
         `<td>${generationStatus.succeeded}</td>`,
-        `<td>Logs</td>`,
-        `<td>Package</td>`,
-        `<td>Pull Request</td>`,
         `</tr>`,
         `</table>`,
         `</body>`,
@@ -195,9 +478,14 @@ describe("SwaggerToSDK", function () {
     });
 
     it("with one failed repository", function () {
-      const generation: Generation = {
-        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
-        pullRequestNumber: 60,
+      const generation: GenerationData = {
+        pullRequest: {
+          repository: getGitHubRepository(pullRequestRepository),
+          number: pullRequestNumber,
+          htmlUrl: pullRequest.html_url,
+          diffUrl: pullRequest.diff_url,
+          mergeCommit: pullRequestMergeCommitSha,
+        },
         commentId: 50,
         logsBlobUrl: "fake_logs_blob_url",
         repositories: {
@@ -207,7 +495,7 @@ describe("SwaggerToSDK", function () {
           }
         }
       };
-      assert.deepEqual(getGenerationHTML(generation), [
+      assert.deepEqual(getGenerationDataHTMLLines(generation), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -216,9 +504,6 @@ describe("SwaggerToSDK", function () {
         `<tr>`,
         `<td><a href="https://github.com/Azure/azure-sdk-for-js">Azure/azure-sdk-for-js</a></td>`,
         `<td>${generationStatus.failed}</td>`,
-        `<td>Logs</td>`,
-        `<td>Package</td>`,
-        `<td>Pull Request</td>`,
         `</tr>`,
         `</table>`,
         `</body>`,
@@ -227,9 +512,14 @@ describe("SwaggerToSDK", function () {
     });
 
     it("with one in-progress repository", function () {
-      const generation: Generation = {
-        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
-        pullRequestNumber: 60,
+      const generation: GenerationData = {
+        pullRequest: {
+          repository: getGitHubRepository(pullRequestRepository),
+          number: pullRequestNumber,
+          htmlUrl: pullRequest.html_url,
+          diffUrl: pullRequest.diff_url,
+          mergeCommit: pullRequestMergeCommitSha,
+        },
         commentId: 50,
         logsBlobUrl: "fake_logs_blob_url",
         repositories: {
@@ -239,7 +529,7 @@ describe("SwaggerToSDK", function () {
           }
         }
       };
-      assert.deepEqual(getGenerationHTML(generation), [
+      assert.deepEqual(getGenerationDataHTMLLines(generation), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -248,9 +538,6 @@ describe("SwaggerToSDK", function () {
         `<tr>`,
         `<td><a href="https://github.com/Azure/azure-sdk-for-js">Azure/azure-sdk-for-js</a></td>`,
         `<td>${generationStatus.inProgress}</td>`,
-        `<td>Logs</td>`,
-        `<td>Package</td>`,
-        `<td>Pull Request</td>`,
         `</tr>`,
         `</table>`,
         `</body>`,
@@ -259,9 +546,14 @@ describe("SwaggerToSDK", function () {
     });
 
     it("with one pending repository", function () {
-      const generation: Generation = {
-        pullRequestRepositoryFullName: "Azure/azure-rest-api-specs",
-        pullRequestNumber: 60,
+      const generation: GenerationData = {
+        pullRequest: {
+          repository: getGitHubRepository(pullRequestRepository),
+          number: pullRequestNumber,
+          htmlUrl: pullRequest.html_url,
+          diffUrl: pullRequest.diff_url,
+          mergeCommit: pullRequestMergeCommitSha,
+        },
         commentId: 50,
         logsBlobUrl: "fake_logs_blob_url",
         repositories: {
@@ -271,7 +563,7 @@ describe("SwaggerToSDK", function () {
           }
         }
       };
-      assert.deepEqual(getGenerationHTML(generation), [
+      assert.deepEqual(getGenerationDataHTMLLines(generation), [
         `<html>`,
         `<body>`,
         `<h1>Generation Progress</h1>`,
@@ -280,14 +572,29 @@ describe("SwaggerToSDK", function () {
         `<tr>`,
         `<td><a href="https://github.com/Azure/azure-sdk-for-js">Azure/azure-sdk-for-js</a></td>`,
         `<td>${generationStatus.pending}</td>`,
-        `<td>Logs</td>`,
-        `<td>Package</td>`,
-        `<td>Pull Request</td>`,
         `</tr>`,
         `</table>`,
         `</body>`,
         `</html>`
       ]);
+    });
+  });
+
+  describe("getPullRequestRepository()", function () {
+    it("with non-URL", function () {
+      assert.strictEqual(getPullRequestRepository("apples and bananas"), undefined);
+    });
+
+    it("with non-GitHub URL", function () {
+      assert.strictEqual(getPullRequestRepository("https://www.bing.com"), undefined);
+    });
+
+    it("with non-GitHub Pull Request URL", function () {
+      assert.strictEqual(getPullRequestRepository(`https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}`), undefined);
+    });
+
+    it("with GitHub Pull Request URL", function () {
+      assert.deepEqual(getPullRequestRepository(`https://api.github.com/repos/${pullRequestRepository}/pulls/${pullRequestNumber}`), getGitHubRepository(pullRequestRepository));
     });
   });
 
@@ -307,18 +614,22 @@ describe("SwaggerToSDK", function () {
             });
           }
         };
-        const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger, httpClient, github: await createEndToEndGitHub() });
         const webhookBody: GitHubPullRequestWebhookBody = {
           action: "opened",
           number: 1,
           pull_request: pullRequest
         };
 
-        await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: rootPath });
+        await pullRequestChange(webhookBody, workingPrefix, {
+          logger,
+          httpClient,
+          workingFolderPath: rootPath,
+          github: await createEndToEndGitHub()
+        });
 
         assert.deepEqual(logger.allLogs, [
           `Received pull request change webhook request from GitHub for "https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}".`,
-          `Getting generation state from https://fake.storage.com/abc5/${pullRequestRepository}/4994/0/generation.json...`,
+          `Getting generation state from https://fake.storage.com/abc1/${pullRequestRepository}/4994/0/generationData.json...`,
           `Getting diff_url (https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}.diff) contents...`,
           `diff_url response status code is 404.`,
           `Deleting working folder ${rootPath}/1...`,
@@ -341,18 +652,22 @@ describe("SwaggerToSDK", function () {
             });
           }
         };
-        const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger, httpClient, github: await createEndToEndGitHub() });
         const webhookBody: GitHubPullRequestWebhookBody = {
           action: "opened",
           number: 1,
           pull_request: pullRequest
         };
 
-        await swaggerToSDK.pullRequestChange(webhookBody, { workingFolderPath: rootPath });
+        await pullRequestChange(webhookBody, workingPrefix, {
+          logger,
+          httpClient,
+          workingFolderPath: rootPath,
+          github: await createEndToEndGitHub()
+        });
 
         assert.deepEqual(logger.allLogs, [
           `Received pull request change webhook request from GitHub for "https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}".`,
-          `Getting generation state from https://fake.storage.com/abc6/${pullRequestRepository}/4994/0/generation.json...`,
+          `Getting generation state from https://fake.storage.com/abc2/${pullRequestRepository}/4994/0/generationData.json...`,
           `Getting diff_url (https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}.diff) contents...`,
           `diff_url response status code is 200.`,
           `diff_url response body is empty.`,
@@ -363,10 +678,6 @@ describe("SwaggerToSDK", function () {
 
       it("end-to-end", async function () {
         this.timeout(600000);
-
-        const deleteContainer = true;
-        const real = false;
-        const realStorageUrl = `https://autosdkstorage.blob.core.windows.net/`;
 
         const blobStorage: BlobStorage = createEndToEndBlobStorage(real, realStorageUrl);
         const workingPrefix: BlobStoragePrefix = getWorkingPrefix(blobStorage);
@@ -386,7 +697,6 @@ describe("SwaggerToSDK", function () {
           const autorest: string = autorestExecutable({ autorestPath: "./node_modules/.bin/autorest" });
           const runner: Runner = createEndToEndRunner({ real, npm, autorest, baseWorkingFolderPath });
           const github: FakeGitHub = await createEndToEndGitHub();
-          const swaggerToSDK = new SwaggerToSDK(workingPrefix, { logger, httpClient, runner, compressorCreator, github });
           const webhookBody: GitHubPullRequestWebhookBody = {
             action: "opened",
             number: 1,
@@ -394,10 +704,15 @@ describe("SwaggerToSDK", function () {
           };
           const uploadClonedRepositories: boolean = !real;
 
-          await swaggerToSDK.pullRequestChange(webhookBody, {
+          await pullRequestChange(webhookBody, workingPrefix, {
+            logger,
+            runner,
+            httpClient,
             workingFolderPath: baseWorkingFolderPath,
             deleteClonedRepositories: true,
-            uploadClonedRepositories
+            uploadClonedRepositories,
+            github,
+            compressorCreator
           });
 
           assert.strictEqual(await workingPrefix.getContainer().exists(), true);
@@ -405,13 +720,12 @@ describe("SwaggerToSDK", function () {
           const pullRequestPrefix: BlobStoragePrefix = workingPrefix.getPrefix(`${pullRequestRepository}/${pullRequest.number}/`);
           const generationInstancePrefix: BlobStoragePrefix = pullRequestPrefix.getPrefix(`1/`);
 
-          const allLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob(logsFileName);
+          const allLogsBlob: BlobStorageBlob = getLogsBlob(generationInstancePrefix);
           assert.strictEqual(await allLogsBlob.exists(), true);
           assert.strictEqual(await allLogsBlob.getContentType(), "text/plain");
           const expectedLogs: string[] = [
             `Received pull request change webhook request from GitHub for "https://github.com/${pullRequestRepository}/pull/${pullRequestNumber}".`,
             `diff_url response status code is 200.`,
-            `diff_url response body contains 189 lines.`,
             `diff_url response body contains 5 "diff --git" lines.`,
             `diff_url response body contains 5 changed files:`,
             `specification/mysql/resource-manager/Microsoft.DBforMySQL/preview/2017-12-01-preview/examples/ServerCreate.json`,
@@ -427,7 +741,7 @@ describe("SwaggerToSDK", function () {
             `specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreateReplicaMode.json`,
             `Found 1 readme.md files to generate:`,
             `specification/mysql/resource-manager/readme.md`,
-            `Looking for languages to generate in "specification/mysql/resource-manager/readme.md"...`,
+            `Looking for repositories to generate in "specification/mysql/resource-manager/readme.md"...`,
             `Getting file contents for "https://raw.githubusercontent.com/azure/azure-rest-api-specs/${pullRequestMergeCommitSha}/specification/mysql/resource-manager/readme.md"...`,
             `Merged readme.md response status code is 200.`,
             `Found 5 requested SDK repositories:`,
@@ -472,7 +786,7 @@ describe("SwaggerToSDK", function () {
           assert.strictEqual(await javaScriptLogsBlob.exists(), true);
           assert.strictEqual(await javaScriptLogsBlob.getContentType(), "text/plain");
           const javaScriptLogs: string[] = getLines(await javaScriptLogsBlob.getContentsAsString());
-          const javaScriptPackageUrl: URLBuilder = URLBuilder.parse(blobStorage.getBlobURL(`abc7/${pullRequestRepository}/4994/1/Azure/azure-sdk-for-js/azure-arm-mysql-3.2.0.tgz`));
+          const javaScriptPackageUrl: URLBuilder = URLBuilder.parse(blobStorage.getBlobURL(`abc3/${pullRequestRepository}/4994/1/Azure/azure-sdk-for-js/azure-arm-mysql-3.2.0.tgz`));
           javaScriptPackageUrl.setQuery(undefined);
           assertEx.containsAll(javaScriptLogs, [
             `The following files were modified:`,
@@ -517,7 +831,7 @@ describe("SwaggerToSDK", function () {
           const nodeLogsBlob: BlobStorageBlob = generationInstancePrefix.getBlob("Azure/azure-sdk-for-node/logs.txt");
           assert.strictEqual(await nodeLogsBlob.exists(), true);
           assert.strictEqual(await nodeLogsBlob.getContentType(), "text/plain");
-          const nodePackageUrl: URLBuilder = URLBuilder.parse(blobStorage.getBlobURL(`abc7/${pullRequestRepository}/4994/1/Azure/azure-sdk-for-node/azure-arm-mysql-3.2.0.tgz`));
+          const nodePackageUrl: URLBuilder = URLBuilder.parse(blobStorage.getBlobURL(`abc3/${pullRequestRepository}/4994/1/Azure/azure-sdk-for-node/azure-arm-mysql-3.2.0.tgz`));
           nodePackageUrl.setQuery(undefined);
           const nodeLogs: string[] = getLines(await nodeLogsBlob.getContentsAsString());
           assertEx.containsAll(nodeLogs, [
@@ -546,10 +860,10 @@ describe("SwaggerToSDK", function () {
           assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-js/azure-arm-mysql-3.2.0.tgz"), true);
           assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-node/azure-arm-mysql-3.2.0.tgz"), true);
 
-          const generationBlob: BlobStorageBlob = generationInstancePrefix.getBlob("generation.json");
+          const generationBlob: BlobStorageBlob = generationInstancePrefix.getBlob("generationData.json");
           assert.strictEqual(await generationBlob.exists(), true);
-          const generation: Generation = JSON.parse((await generationBlob.getContentsAsString())!);
-          const commentId: number = generation.commentId;
+          const generation: GenerationData = JSON.parse((await generationBlob.getContentsAsString())!);
+          const commentId: number = generation.commentId!;
           const githubComment: GitHubComment = first(await github.getPullRequestComments(pullRequestRepository, pullRequestNumber),
             (comment: GitHubComment) => comment.id === commentId)!;
           assertEx.defined(githubComment, "githubComment");
@@ -577,8 +891,139 @@ function createEndToEndCompressorCreator(real?: boolean): () => Compressor {
     : () => new FakeCompressor();
 }
 
-function createEndToEndHttpClient(): HttpClient {
-  return new NodeHttpClient();
+function createEndToEndHttpClient(real?: boolean): HttpClient {
+  return real
+    ? new NodeHttpClient()
+    : {
+      sendRequest(request: HttpRequest): Promise<HttpResponse> {
+        const requestPath: string | undefined = URLBuilder.parse(request.url.toString()).getPath();
+        let body: string | undefined;
+        switch (requestPath) {
+          case URLBuilder.parse(pullRequest.diff_url).getPath()!:
+            body = `
+diff --git a/specification/mysql/resource-manager/Microsoft.DBforMySQL/preview/2017-12-01-preview/examples/ServerCreate.json b/specification/mysql/resource-manager/Microsoft.DBforMySQL/preview/2017-12-01-preview/examples/ServerCreate.json
+diff --git a/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreate.json b/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreate.json
+diff --git a/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreateGeoRestoreMode.json b/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreateGeoRestoreMode.json
+diff --git a/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreatePointInTimeRestore.json b/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreatePointInTimeRestore.json
+diff --git a/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreateReplicaMode.json b/specification/mysql/resource-manager/Microsoft.DBforMySQL/stable/2017-12-01/examples/ServerCreateReplicaMode.json
+`;
+            break;
+
+          case "/azure/azure-rest-api-specs/5d204450e3ea6709a034208af441ebaaa87bd805/specification/mysql/resource-manager/readme.md":
+            body = `
+\`\`\`yaml $(swagger-to-sdk)
+swagger-to-sdk:
+  - repo: azure-sdk-for-python
+  - repo: azure-sdk-for-java
+  - repo: azure-sdk-for-go
+  - repo: azure-sdk-for-js
+  - repo: azure-sdk-for-node
+\`\`\`
+`;
+            break;
+
+          case "/Azure/azure-sdk-for-js":
+          case "/Azure/azure-sdk-for-python":
+          case "/Azure/azure-sdk-for-go":
+          case "/Azure/azure-sdk-for-java":
+          case "/Azure/azure-sdk-for-node":
+            body = "";
+            break;
+
+          case "/Azure/azure-sdk-for-js/master/swagger_to_sdk_config.json":
+            const jsSwaggerToSDKConfiguration: SwaggerToSDKConfiguration = {
+              "meta": {
+                "autorest_options": {
+                  "typescript": "",
+                  "license-header": "MICROSOFT_MIT_NO_VERSION",
+                  "sdkrel:typescript-sdks-folder": ".",
+                  "use": "@microsoft.azure/autorest.typescript@2.1.1"
+                },
+                "advanced_options": {
+                  "clone_dir": "azure-sdk-for-js"
+                }
+              }
+            };
+            body = JSON.stringify(jsSwaggerToSDKConfiguration);
+            break;
+
+          case "/Azure/azure-sdk-for-python/master/swagger_to_sdk_config.json":
+            const pythonSwaggerToSDKConfiguration: SwaggerToSDKConfiguration = {
+              meta: {
+                autorest_options: {
+                  "version": "preview",
+                  "use": "@microsoft.azure/autorest.python@~3.0.56",
+                  "python": "",
+                  "python-mode": "update",
+                  "multiapi": "",
+                  "sdkrel:python-sdks-folder": "."
+                }
+              }
+            };
+            body = JSON.stringify(pythonSwaggerToSDKConfiguration);
+            break;
+
+          case "/Azure/azure-sdk-for-go/master/swagger_to_sdk_config.json":
+            const goSwaggerToSDKConfiguration: SwaggerToSDKConfiguration = {
+              meta: {
+                "autorest_options": {
+                  "use": "@microsoft.azure/autorest.go@~2.1.127",
+                  "go": "",
+                  "verbose": "",
+                  "multiapi": "",
+                  "use-onever": "",
+                  "preview-chk": "",
+                  "sdkrel:go-sdk-folder": "."
+                },
+                advanced_options: {
+                  clone_dir: "src/github.com/Azure/azure-sdk-for-go"
+                }
+              }
+            };
+            body = JSON.stringify(goSwaggerToSDKConfiguration);
+            break;
+
+          case "/Azure/azure-sdk-for-java/master/swagger_to_sdk_config.json":
+            const javaSwaggerToSDKConfiguration: SwaggerToSDKConfiguration = {
+              "meta": {
+                "autorest_options": {
+                  "java": "",
+                  "verbose": "",
+                  "multiapi": "",
+                  "sdkrel:azure-libraries-for-java-folder": ".",
+                  "use": "@microsoft.azure/autorest.java@2.1.85",
+                }
+              }
+            };
+            body = JSON.stringify(javaSwaggerToSDKConfiguration);
+            break;
+
+          case "/Azure/azure-sdk-for-node/master/swagger_to_sdk_config.json":
+            const nodeSwaggerToSDKConfiguration: SwaggerToSDKConfiguration = {
+              "meta": {
+                "autorest_options": {
+                  "nodejs": "",
+                  "license-header": "MICROSOFT_MIT_NO_VERSION",
+                  "use": "@microsoft.azure/autorest.nodejs@2.2.131",
+                  "sdkrel:node-sdks-folder": "."
+                },
+                "advanced_options": {
+                  "clone_dir": "azure-sdk-for-node"
+                }
+              }
+            };
+            body = JSON.stringify(nodeSwaggerToSDKConfiguration);
+            break;
+        }
+
+        return Promise.resolve({
+          request,
+          statusCode: body != undefined ? 200 : 404,
+          headers: new HttpHeaders(),
+          body
+        });
+      }
+    };
 }
 
 interface CreateEndToEndRunnerOptions {
