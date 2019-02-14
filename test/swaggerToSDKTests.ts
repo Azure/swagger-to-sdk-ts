@@ -4,8 +4,8 @@ import { assert } from "chai";
 import { createGenerationIteration, createTempFolder, csharp, GenerationData, generationStatus, getAllLanguages, getCompressedRepositoryFileName, getCompressorCreator, getGenerationDataHTMLLines, getGenerationIterationPrefix, getGitHub, getLanguageForRepository, getLogsBlob, getPullRequestPrefix, getPullRequestRepository, getRepositoryFolderPath, getSupportedLanguages, getWorkingFolderPath, go, LanguageConfiguration, logChangedFiles, pullRequestChange, python, ruby, SwaggerToSDKConfiguration } from "../lib/swaggerToSDK";
 
 const deleteContainer = true;
-const real = true;
-const realStorageUrl = `https://autosdkstorage.blob.core.windows.net/?sv=2018-03-28&ss=bfqt&srt=sco&sp=rwdlacup&se=2019-02-14T07:21:43Z&st=2019-02-13T23:21:43Z&spr=https&sig=aPWFwEfhvS1645Y3Yc2NSeCmqvGyOBtO0oyUTLkKjlg%3D`;
+const real = false;
+const realStorageUrl = `https://autosdkstorage.blob.core.windows.net/`;
 
 const baseCommit: GitHubCommit = {
   label: "Azure:master",
