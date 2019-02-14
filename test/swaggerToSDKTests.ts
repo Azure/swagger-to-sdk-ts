@@ -1,7 +1,7 @@
-import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, createFolder, deleteFolder, FakeCompressor, FakeGitHub, FakeRunner, first, folderExistsSync, getInMemoryLogger, getName, getParentFolderPath, getRootPath, GitHub, GitHubComment, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealRunner, Runner, URLBuilder, writeFileContents, getGitHubRepository } from "@ts-common/azure-js-dev-tools";
+import { ArchiverCompressor, assertEx, autorestExecutable, AzureBlobStorage, BlobPath, BlobStorage, BlobStorageBlob, BlobStoragePrefix, Compressor, createFolder, deleteFolder, FakeCompressor, FakeGitHub, FakeRunner, first, folderExistsSync, getGitHubRepository, getInMemoryLogger, getName, getParentFolderPath, getRootPath, GitHub, GitHubComment, GitHubCommit, GitHubPullRequest, GitHubPullRequestWebhookBody, HttpClient, HttpHeaders, HttpRequest, HttpResponse, InMemoryBlobStorage, InMemoryLogger, joinPath, NodeHttpClient, normalize, npmExecutable, RealRunner, Runner, URLBuilder, writeFileContents } from "@ts-common/azure-js-dev-tools";
 import { getLines } from "@ts-common/azure-js-dev-tools/dist/lib/common";
 import { assert } from "chai";
-import { createGenerationIteration, createTempFolder, csharp, GenerationData, generationStatus, getAllLanguages, getCompressedRepositoryFileName, getCompressorCreator, getGenerationDataHTMLLines, getGenerationIterationPrefix, getGitHub, getLanguageForRepository, getLogsBlob, getPullRequestPrefix, getRepositoryFolderPath, getSupportedLanguages, getWorkingFolderPath, go, LanguageConfiguration, logChangedFiles, pullRequestChange, python, ruby, SwaggerToSDKConfiguration, getPullRequestRepository } from "../lib/swaggerToSDK";
+import { createGenerationIteration, createTempFolder, csharp, GenerationData, generationStatus, getAllLanguages, getCompressedRepositoryFileName, getCompressorCreator, getGenerationDataHTMLLines, getGenerationIterationPrefix, getGitHub, getLanguageForRepository, getLogsBlob, getPullRequestPrefix, getPullRequestRepository, getRepositoryFolderPath, getSupportedLanguages, getWorkingFolderPath, go, LanguageConfiguration, logChangedFiles, pullRequestChange, python, ruby, SwaggerToSDKConfiguration } from "../lib/swaggerToSDK";
 
 const deleteContainer = true;
 const real = false;
@@ -677,7 +677,7 @@ describe("swaggerToSDK.ts", function () {
       });
 
       it("end-to-end", async function () {
-        this.timeout(600000);
+        this.timeout(3600000);
 
         const blobStorage: BlobStorage = createEndToEndBlobStorage(real, realStorageUrl);
         const workingPrefix: BlobStoragePrefix = getWorkingPrefix(blobStorage);
@@ -702,7 +702,6 @@ describe("swaggerToSDK.ts", function () {
             number: 1,
             pull_request: pullRequest
           };
-          const uploadClonedRepositories: boolean = !real;
 
           await pullRequestChange(webhookBody, workingPrefix, {
             logger,
@@ -710,7 +709,6 @@ describe("swaggerToSDK.ts", function () {
             httpClient,
             workingFolderPath: baseWorkingFolderPath,
             deleteClonedRepositories: true,
-            uploadClonedRepositories,
             github,
             compressorCreator
           });
@@ -851,11 +849,11 @@ describe("swaggerToSDK.ts", function () {
             `No packageRootFileName property has been specified in the language configuration for Go.`
           ]);
 
-          assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-js/azure.azure-sdk-for-js.zip"), uploadClonedRepositories);
-          assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-java/azure.azure-sdk-for-java.zip"), uploadClonedRepositories);
-          assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-python/azure.azure-sdk-for-python.zip"), uploadClonedRepositories);
-          assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-node/azure.azure-sdk-for-node.zip"), uploadClonedRepositories);
-          assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-go/azure.azure-sdk-for-go.zip"), uploadClonedRepositories);
+          assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-js/azure.azure-sdk-for-js.zip"), false);
+          assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-java/azure.azure-sdk-for-java.zip"), false);
+          assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-python/azure.azure-sdk-for-python.zip"), false);
+          assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-node/azure.azure-sdk-for-node.zip"), false);
+          assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-go/azure.azure-sdk-for-go.zip"), true);
 
           assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-js/azure-arm-mysql-3.2.0.tgz"), true);
           assert.strictEqual(await generationInstancePrefix.blobExists("Azure/azure-sdk-for-node/azure-arm-mysql-3.2.0.tgz"), true);
